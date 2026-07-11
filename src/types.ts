@@ -11,7 +11,8 @@ export type LoadTiming =
   | "path-triggered"
   | "on-invocation"
   | "on-spawn"
-  | "event-driven";
+  | "event-driven"
+  | "not-loaded";
 
 /** Records that this item wins/loses a cross-level name conflict. */
 export interface OverrideInfo {
@@ -101,6 +102,8 @@ export interface LevelInventory {
   settings: SettingsSummary[];
   mcpServers: McpServerItem[];
   workflows: GenericItem[];
+  /** Known Claude Code runtime data (caches, logs, history) — never loaded into context. */
+  runtime: GenericItem[];
   other: GenericItem[];
 }
 

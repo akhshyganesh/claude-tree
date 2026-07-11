@@ -67,6 +67,11 @@ function renderLevel(inv: LevelInventory, out: string[]): void {
   category("mcp servers", inv.mcpServers, out);
   category("workflows", inv.workflows, out);
   category("other (not loaded)", inv.other, out);
+  if (inv.runtime.length > 0) {
+    out.push(
+      `  ├─ runtime data (${inv.runtime.length} items, not loaded into context)`,
+    );
+  }
   for (const s of inv.settings) {
     out.push(
       `  ├─ settings: allow ${s.allowCount} / deny ${s.denyCount} / ask ${s.askCount}` +

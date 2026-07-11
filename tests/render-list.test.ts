@@ -50,6 +50,18 @@ describe("renderList", () => {
     expect(ruleLine).toBeDefined();
   });
 
+  it("collapses runtime data into a single line", () => {
+    const rt = lines.find((l) =>
+      /runtime data \(\d+ items, not loaded into context\)/.test(l),
+    );
+    expect(rt).toBeDefined();
+  });
+
+  it("never labels runtime data as [on demand]", () => {
+    const rt = lines.find((l) => l.includes("runtime data ("));
+    expect(rt).not.toContain("[on demand]");
+  });
+
   it("renders the three load-order phases", () => {
     expect(out).toContain("1. Config resolution");
     expect(out).toContain("2. Memory injection");

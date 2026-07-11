@@ -1,7 +1,3 @@
-// ABOUTME: Placeholder for the Ink TUI, added by a later task.
-// ABOUTME: Throws so the CLI can detect its absence and fall back to --list mode.
-import type { ScanResult } from "../types.js";
-
-export function runTui(_scan: ScanResult): void {
-  throw new Error("TUI not built yet");
-}
+// ABOUTME: TUI entrypoint — re-exports runTui so the CLI can dynamically import it.
+// ABOUTME: Kept JSX-free; the Ink component and render live in app.tsx.
+export { runTui, App } from "./app.js";

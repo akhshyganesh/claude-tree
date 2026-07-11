@@ -43,7 +43,7 @@ export interface TimingExplanation {
 }
 
 /** Per-category load-timing labels + one-line explanations shown in the UI. */
-export const LOAD_TIMINGS: Record<string, TimingExplanation> = {
+export const LOAD_TIMINGS = {
   memory: {
     timing: "session-start",
     label: "session start",
@@ -99,7 +99,13 @@ export const LOAD_TIMINGS: Record<string, TimingExplanation> = {
     label: "session start",
     howItLoads: "Settings are resolved and merged at session start by precedence.",
   },
-};
+  runtime: {
+    timing: "not-loaded",
+    label: "not loaded",
+    howItLoads:
+      "Claude Code runtime data (caches, logs, history, credentials). Never loaded into model context.",
+  },
+} satisfies Record<string, TimingExplanation>;
 
 export interface LoadPhaseItem {
   name: string;

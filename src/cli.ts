@@ -55,10 +55,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Default: try the TUI, fall back to list mode with a note.
+  // Default: run the TUI only on a real TTY; otherwise emit the plain list.
+  if (!process.stdout.isTTY) {
+    process.stdout.write(renderList(result) + "\n");
+    return;
+  }
   try {
     const { runTui } = await import("./tui/index.js");
-    runTui(result);
+    await runTui(result);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     process.stderr.write(`(TUI unavailable: ${reason}; showing --list)\n\n`);

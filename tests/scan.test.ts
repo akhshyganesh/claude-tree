@@ -114,6 +114,24 @@ describe("scan", () => {
     expect(r.levels.project.other.map((o) => o.name)).toContain("notes.txt");
   });
 
+  it("classifies known runtime data separately from unknown files", () => {
+    const r = run();
+    const runtimeNames = r.levels.project.runtime.map((x) => x.name);
+    expect(runtimeNames).toContain("history.jsonl");
+    expect(runtimeNames).toContain("projects");
+    expect(runtimeNames).toContain("pkg.lock");
+    expect(runtimeNames).toContain(".credentials.json");
+    // Genuinely-unknown files stay in "other", not "runtime".
+    expect(r.levels.project.other.map((o) => o.name)).not.toContain(
+      "history.jsonl",
+    );
+    // Runtime items carry the not-loaded timing (never "on demand").
+    const hist = r.levels.project.runtime.find(
+      (x) => x.name === "history.jsonl",
+    )!;
+    expect(hist.loadTiming).toBe("not-loaded");
+  });
+
   it("tolerates a totally empty environment", () => {
     const r = scan({ cwd: "/nonexistent/dir/xyz", home: "/nonexistent/home" });
     expect(r.projectRoot).toBeNull();

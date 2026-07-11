@@ -104,8 +104,40 @@ function emptyInventory(level: Level): LevelInventory {
     settings: [],
     mcpServers: [],
     workflows: [],
+    runtime: [],
     other: [],
   };
+}
+
+/** Directory names Claude Code uses for runtime data (never loaded into context). */
+const RUNTIME_DIRS = new Set([
+  "projects",
+  "file-history",
+  "shell-snapshots",
+  "cache",
+  "paste-cache",
+  "image-cache",
+  "backups",
+  "plans",
+  "todos",
+  "tasks",
+  "logs",
+  "session-env",
+  "ide",
+  "statsig",
+  "debug",
+]);
+
+/** Individual runtime file names. */
+const RUNTIME_FILES = new Set(["history.jsonl", ".credentials.json"]);
+
+/** True for known Claude Code runtime data (caches, logs, history, dotfiles). */
+function isRuntimeEntry(name: string): boolean {
+  if (RUNTIME_DIRS.has(name)) return true;
+  if (RUNTIME_FILES.has(name)) return true;
+  if (name.endsWith(".lock") || name.endsWith(".tmp")) return true;
+  if (name.startsWith(".")) return true;
+  return false;
 }
 
 const KNOWN_ENTRIES = new Set([
@@ -474,18 +506,22 @@ function scanClaudeDir(
     localInv.hooks.push(...localSettings.hooks);
   }
 
-  // Everything else at the top level of the dir → "other, not loaded".
+  // Everything else at the top level of the dir → runtime data (collapsed) or
+  // genuinely-unknown "other, not loaded".
   for (const ent of safeReadDir(claudeDir)) {
     if (KNOWN_ENTRIES.has(ent.name)) continue;
     if (ent.name === ".mcp.json") continue;
-    inv.other.push({
+    const runtime = isRuntimeEntry(ent.name);
+    const item: GenericItem = {
       name: ent.name,
       description: ent.isDirectory() ? "directory" : "file",
       path: path.join(claudeDir, ent.name),
       level,
-      loadTiming: "on-demand",
+      loadTiming: runtime ? "not-loaded" : "on-demand",
       override: {},
-    });
+    };
+    if (runtime) inv.runtime.push(item);
+    else inv.other.push(item);
   }
 }
 

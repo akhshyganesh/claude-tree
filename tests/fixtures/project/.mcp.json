@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "mcp-server-postgres",
+      "args": ["--dsn", "postgres://localhost/app"]
+    },
+    "docs": {
+      "type": "http",
+      "url": "https://example.com/mcp"
+    }
+  }
+}

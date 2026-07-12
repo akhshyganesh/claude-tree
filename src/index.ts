@@ -5,6 +5,19 @@ export { scan } from "./scan.js";
 export {
   loadingModel,
   buildLoadOrder,
+  explainItem,
   type LoadPhase,
+  type ItemType,
+  type ExplainInput,
+  type ItemExplanation,
 } from "./loading-model.js";
+export {
+  estimateTokens,
+  summarizeContextCost,
+  collectCostRows,
+  costBar,
+  type ContextCostSummary,
+  type CostRow,
+  type LevelCost,
+} from "./context-cost.js";
 export { renderList } from "./render-list.js";

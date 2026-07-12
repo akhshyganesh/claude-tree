@@ -25,24 +25,34 @@ instead of tribal knowledge.
 
 ## What you get
 
-- **Config tree** — levels → categories → items, with name, description, and a load-timing
+A lazygit-style fullscreen TUI with three stacked panels on the left and an always-visible
+detail pane on the right:
+
+- **1 · Config** — levels → categories → items, with name, description, and a load-timing
   tag on every item. Runtime data (caches, session files) is collapsed and marked
   "not loaded into context" so it doesn't masquerade as config.
+- **2 · Session start** — the ordered pipeline of what happens when a session starts in
+  this directory: config resolution → memory injection → everything that stays dormant
+  until triggered. Scrollable.
+- **3 · Context cost** — an estimate (~tokens ≈ chars/4) of how much each config injects:
+  the total tokens loaded at **session start**, a per-level breakdown, the most expensive
+  items as a proportional bar chart, and the **deferred** pool that only loads on
+  invocation / spawn / a matching file touch.
 - **Detail pane** — path, frontmatter summary (model, tools, path globs, invocation
-  flags), a one-line "how this loads" explanation, and override notes when the same name
-  exists at another level.
-- **Load-order view** (`o`) — the ordered pipeline of what happens when a session starts
-  in this directory: config resolution → memory injection → everything that stays dormant
-  until triggered.
+  flags), a plain-English "what is this", "who triggers it" (you vs the model vs the
+  harness), "when it costs context", the load explanation, per-item token cost, and
+  override notes when the same name exists at another level.
 - **Help** (`?`) — the precedence rules themselves, straight from the official docs.
 
-Keys: `↑↓` navigate · `←→` expand/collapse · `o` load order · `?` help · `q` quit.
+Keys: `1`/`2`/`3` or `tab` focus a panel · `↑↓` move · `←→`/enter expand/collapse (Config)
+· `?` help · `q` quit. The TUI runs in the alternate screen buffer and restores your
+terminal on exit (even on SIGINT/SIGTERM).
 
 ## Non-interactive
 
 ```bash
-npx claude-tree --list   # plain-text tree + load order (CI, pipes, grep)
-npx claude-tree --json   # the raw scan result
+npx claude-tree --list   # plain-text tree + load order + context-cost summary (CI, pipes, grep)
+npx claude-tree --json   # the raw scan result, incl. per-item contextCost
 ```
 
 The default invocation also falls back to `--list` automatically when stdout isn't a TTY.

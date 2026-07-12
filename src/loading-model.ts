@@ -107,6 +107,139 @@ export const LOAD_TIMINGS = {
   },
 } satisfies Record<string, TimingExplanation>;
 
+/** The item categories the UI/renderers explain. */
+export type ItemType =
+  | "memory"
+  | "rule"
+  | "skill"
+  | "command"
+  | "agent"
+  | "hook"
+  | "mcp"
+  | "settings"
+  | "workflow"
+  | "other"
+  | "runtime";
+
+/** Everything explainItem needs to phrase "what/who/when" for one item. */
+export interface ExplainInput {
+  type: ItemType;
+  name?: string;
+  /** skills/commands: model auto-invocation disabled. */
+  disableModelInvocation?: boolean;
+  /** skills/commands: path globs restricting auto-activation. */
+  paths?: string[];
+  /** rules: has paths: frontmatter. */
+  pathScoped?: boolean;
+  /** hooks: the event it fires on. */
+  event?: string;
+  /** memory: CLAUDE.local.md vs CLAUDE.md. */
+  deprecated?: boolean;
+  /** context-cost note, surfaced verbatim in "when it costs context". */
+  costNote?: string;
+}
+
+export interface ItemExplanation {
+  /** Plain-English "what is this". */
+  whatIsThis: string;
+  /** Who/what triggers it entering context. */
+  whoTriggers: string;
+  /** When it costs context, from the context-cost note. */
+  whenItCostsContext: string;
+}
+
+/**
+ * Plain-English explanations for an item: what it is, who triggers it, when it
+ * costs context. Pure/data so --list, --json and the TUI share one source.
+ */
+export function explainItem(input: ExplainInput): ItemExplanation {
+  const name = input.name ?? "name";
+  let whatIsThis: string;
+  let whoTriggers: string;
+
+  switch (input.type) {
+    case "memory":
+      whatIsThis = input.deprecated
+        ? "Memory: CLAUDE.local.md — deprecated, personal/gitignored memory merged into context."
+        : "Memory: a CLAUDE.md file merged into context, plus one level of @imports.";
+      whoTriggers =
+        "The harness, at session start (nested/below-cwd memory loads on demand when its files are read).";
+      break;
+    case "rule":
+      whatIsThis = input.pathScoped
+        ? "A path-scoped rule: guidance that applies only to files matching its globs."
+        : "An unconditional rule: always-on guidance, loaded like CLAUDE.md.";
+      whoTriggers = input.pathScoped
+        ? "The harness, on file touch — loads when you touch a file matching its paths: globs."
+        : "The harness, at session start.";
+      break;
+    case "skill":
+    case "command": {
+      const kind =
+        input.type === "command"
+          ? "A legacy command: reusable instructions invoked as /" + name + "."
+          : "A skill: reusable instructions invoked as /" +
+            name +
+            " or auto-loaded by the model when relevant.";
+      whatIsThis = kind;
+      const parts = [`you (/${name})`];
+      if (input.disableModelInvocation) {
+        parts.push("user-only: the model cannot auto-invoke this");
+      } else {
+        parts.push("the model, when your request matches its description");
+      }
+      if (input.paths && input.paths.length > 0) {
+        parts.push(`auto-activation restricted to ${input.paths.join(", ")}`);
+      }
+      whoTriggers = parts.join("; ");
+      break;
+    }
+    case "agent":
+      whatIsThis =
+        "A subagent: a separate agent definition the model can delegate a task to.";
+      whoTriggers =
+        "The model delegates when a task matches the description, or you @-mention it.";
+      break;
+    case "hook":
+      whatIsThis =
+        "A hook: a command the harness runs deterministically on an event.";
+      whoTriggers = `The harness, deterministically on ${input.event ?? "its event"}; the model cannot skip it.`;
+      break;
+    case "mcp":
+      whatIsThis =
+        "An MCP server: external tools the model can call; connected at session start.";
+      whoTriggers =
+        "The harness connects it at session start; the model calls its tools on demand.";
+      break;
+    case "settings":
+      whatIsThis =
+        "Settings: permissions, env, and hook wiring merged by precedence.";
+      whoTriggers = "The harness, at session start.";
+      break;
+    case "workflow":
+      whatIsThis = "A workflow file; loaded/run on demand, not auto-injected.";
+      whoTriggers = "You or a workflow runner, on demand.";
+      break;
+    case "runtime":
+      whatIsThis =
+        "Claude Code runtime data (caches, logs, history) — never loaded into context.";
+      whoTriggers = "Nobody injects it; it is never loaded into model context.";
+      break;
+    case "other":
+    default:
+      whatIsThis = "An unrecognized file; not auto-loaded by Claude.";
+      whoTriggers = "Nobody automatically; the model may read it on demand.";
+      break;
+  }
+
+  return {
+    whatIsThis,
+    whoTriggers,
+    whenItCostsContext:
+      input.costNote ?? "See the load timing above for when this costs context.",
+  };
+}
+
 export interface LoadPhaseItem {
   name: string;
   detail: string;

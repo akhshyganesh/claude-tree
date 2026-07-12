@@ -1,6 +1,7 @@
 // ABOUTME: Plain-text tree renderer for --list mode and non-interactive shells.
 // ABOUTME: Zero-dependency unicode glyphs; consumes a ScanResult and the load-order phases.
 import { buildLoadOrder, LOAD_TIMINGS } from "./loading-model.js";
+import { summarizeContextCost, costBar } from "./context-cost.js";
 import { stripControl } from "./util.js";
 import type {
   BaseItem,
@@ -38,10 +39,16 @@ function overrideNote(item: BaseItem): string {
   return "";
 }
 
+function costTag(item: BaseItem): string {
+  const c = item.contextCost;
+  if (!c) return "";
+  return ` ~${c.sessionStartTokens}t start / ~${c.deferredTokens}t deferred`;
+}
+
 function line(item: BaseItem): string {
   const name = stripControl(item.name);
   const desc = item.description ? ` — ${stripControl(item.description)}` : "";
-  return `${name}${desc} ${timingTag(item)}${overrideNote(item)}`;
+  return `${name}${desc} ${timingTag(item)}${costTag(item)}${overrideNote(item)}`;
 }
 
 function category(title: string, items: BaseItem[], out: string[]): void {
@@ -108,5 +115,35 @@ export function renderList(scan: ScanResult): string {
     }
   }
 
+  out.push("");
+  renderContextCost(scan, out);
+
   return out.join("\n");
+}
+
+/** The context-cost summary section (estimates; ~tokens ≈ chars/4). */
+function renderContextCost(scan: ScanResult, out: string[]): void {
+  const summary = summarizeContextCost(scan);
+  out.push("Context cost (estimate, ~tokens ≈ chars/4):");
+  out.push(
+    `  ~${summary.totalSessionStart} tokens injected at session start · ~${summary.totalDeferred} tokens deferred`,
+  );
+  if (summary.perLevel.length > 0) {
+    out.push("  per level (session start):");
+    for (const lc of summary.perLevel) {
+      out.push(
+        `    ${LEVEL_LABEL[lc.level]}: ~${lc.sessionStartTokens}t start / ~${lc.deferredTokens}t deferred`,
+      );
+    }
+  }
+  if (summary.topItems.length > 0) {
+    const max = summary.topItems[0]!.sessionStartTokens;
+    out.push("  most expensive at session start:");
+    for (const it of summary.topItems) {
+      const bar = costBar(it.sessionStartTokens, max, 20);
+      out.push(
+        `    ${bar.padEnd(20)} ~${it.sessionStartTokens}t  ${stripControl(it.name)} [${it.level}/${it.type}]`,
+      );
+    }
+  }
 }

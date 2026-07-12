@@ -69,6 +69,20 @@ describe("renderList", () => {
     expect(out).toContain("2. Memory injection");
     expect(out).toContain("3. Dormant until triggered");
   });
+
+  it("renders a context-cost summary section with totals and a bar chart", () => {
+    expect(out).toContain("Context cost (estimate");
+    expect(out).toContain("tokens injected at session start");
+    expect(out).toContain("most expensive at session start:");
+    expect(out).toContain("█");
+  });
+
+  it("annotates item lines with an estimated token cost", () => {
+    const skillLine = lines.find(
+      (l) => l.includes("format-code") && l.includes("t start"),
+    );
+    expect(skillLine).toBeDefined();
+  });
 });
 
 describe("renderList control-character stripping", () => {

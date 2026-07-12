@@ -22,6 +22,18 @@ export interface OverrideInfo {
   overriddenBy?: Level;
 }
 
+/**
+ * Estimated context cost of an item, in tokens (~chars/4). Always an estimate.
+ * `sessionStartTokens` = injected into context when a session starts here;
+ * `deferredTokens` = only paid later (on invocation / spawn / matching file).
+ */
+export interface ContextCost {
+  sessionStartTokens: number;
+  deferredTokens: number;
+  /** Human note on when the deferred cost is paid, or why the cost varies. */
+  note?: string;
+}
+
 /** Fields every inventoried item carries. */
 export interface BaseItem {
   name: string;
@@ -31,6 +43,8 @@ export interface BaseItem {
   level: Level;
   loadTiming: LoadTiming;
   override: OverrideInfo;
+  /** Estimated token cost; populated by the scan (decorate step). */
+  contextCost?: ContextCost;
 }
 
 export interface MemoryFile extends BaseItem {

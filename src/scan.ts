@@ -3,6 +3,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
+import {
+  agentCost,
+  memoryCost,
+  mcpCost,
+  noContextCost,
+  ruleCost,
+  skillCost,
+} from "./context-cost.js";
 import type {
   AgentItem,
   GenericItem,
@@ -208,6 +216,20 @@ function ancestorChain(root: string, cwd: string): string[] {
   return dirs;
 }
 
+/** Summed char size of one level of @imports, resolved relative to the memory dir. */
+function resolveImportChars(file: string, imports: string[]): number {
+  const dir = path.dirname(file);
+  let chars = 0;
+  for (const target of imports) {
+    const resolved = target.startsWith("~/")
+      ? path.resolve(dir, target.slice(2))
+      : path.resolve(dir, target);
+    const text = safeRead(resolved);
+    if (text !== null) chars += text.length;
+  }
+  return chars;
+}
+
 function parseMemory(
   file: string,
   level: Level,
@@ -220,6 +242,7 @@ function parseMemory(
   const first = firstParagraph(parsed.content);
   const desc =
     typeof fm.description === "string" ? fm.description : first || kind;
+  const imports = findImports(text);
   return {
     name: kind,
     description: desc,
@@ -227,9 +250,10 @@ function parseMemory(
     level,
     loadTiming: "session-start",
     override: {},
+    contextCost: memoryCost(text.length, resolveImportChars(file, imports)),
     kind,
     deprecated: kind === "CLAUDE.local.md",
-    imports: findImports(text),
+    imports,
     firstParagraph: first,
   };
 }
@@ -259,6 +283,7 @@ function parseRules(dir: string, level: Level): RuleItem[] {
       level,
       loadTiming: pathScoped ? "path-triggered" : "session-start",
       override: {},
+      contextCost: ruleCost(pathScoped, parsed.content.length),
       pathScoped,
       globs,
     });
@@ -288,6 +313,7 @@ function parseSkills(dir: string, level: Level): SkillItem[] {
       level,
       loadTiming: "on-invocation",
       override: {},
+      contextCost: skillCost(description.length, parsed.content.length),
       disableModelInvocation: fm["disable-model-invocation"] === true,
       paths: toStringArray(fm.paths),
       legacyCommand: false,
@@ -319,6 +345,7 @@ function parseCommands(dir: string, level: Level): SkillItem[] {
       level,
       loadTiming: "on-invocation",
       override: {},
+      contextCost: skillCost(description.length, parsed.content.length),
       disableModelInvocation: fm["disable-model-invocation"] === true,
       paths: toStringArray(fm.paths),
       legacyCommand: true,
@@ -356,6 +383,7 @@ function parseAgentsRecursive(
       level,
       loadTiming: "on-spawn",
       override: {},
+      contextCost: agentCost(text.length),
     };
     if (typeof fm.model === "string") agent.model = fm.model;
     if (typeof fm.tools === "string") agent.tools = fm.tools;
@@ -461,6 +489,9 @@ function parseHooks(
         level,
         loadTiming: "event-driven",
         override: {},
+        contextCost: noContextCost(
+          "no context: hooks run deterministically outside the model",
+        ),
         event,
         matcher,
         commandSummary,
@@ -506,6 +537,7 @@ function parseMcpFile(
       level,
       loadTiming: "session-start",
       override: {},
+      contextCost: mcpCost(),
       source,
       transport,
     });

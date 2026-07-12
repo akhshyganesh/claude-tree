@@ -1,7 +1,8 @@
 // ABOUTME: Pure detail-pane builder — turns a selected NodeData into display lines.
 // ABOUTME: No Ink/React; unit-testable. Load-timing wording comes from loading-model LOAD_TIMINGS.
-import { LOAD_TIMINGS } from "../loading-model.js";
+import { LOAD_TIMINGS, explainItem, type ExplainInput } from "../loading-model.js";
 import { stripControl } from "../util.js";
+import type { ContextCost } from "../types.js";
 import type { NodeData } from "./tree.js";
 
 export interface DetailLine {
@@ -54,6 +55,79 @@ function timingFor(data: NodeData): Timing {
   }
 }
 
+/** The context cost carried by a node, if any. */
+function costFor(data: NodeData): ContextCost | undefined {
+  if (data.type === "runtime") return undefined;
+  if (data.type === "settings") return undefined;
+  return data.item.contextCost;
+}
+
+/** Build the explain-input (what/who/when) for a node. */
+function explainInputFor(data: NodeData): ExplainInput {
+  const cost = costFor(data);
+  const costNote = cost?.note;
+  switch (data.type) {
+    case "memory":
+      return { type: "memory", deprecated: data.item.deprecated, costNote };
+    case "rule":
+      return { type: "rule", pathScoped: data.item.pathScoped, costNote };
+    case "skill":
+    case "command":
+      return {
+        type: data.type,
+        name: data.item.name,
+        disableModelInvocation: data.item.disableModelInvocation,
+        paths: data.item.paths,
+        costNote,
+      };
+    case "agent":
+      return { type: "agent", name: data.item.name, costNote };
+    case "hook":
+      return { type: "hook", event: data.item.event, costNote };
+    case "mcp":
+      return { type: "mcp", name: data.item.name, costNote };
+    case "settings":
+      return { type: "settings" };
+    case "workflow":
+      return { type: "workflow" };
+    case "other":
+      return { type: "other" };
+    case "runtime":
+      return { type: "runtime" };
+  }
+}
+
+/** Format the estimated context-cost line(s) for a node. */
+export function costLines(data: NodeData): DetailLine[] {
+  const cost = costFor(data);
+  const lines: DetailLine[] = [];
+  if (data.type === "settings") {
+    lines.push({ text: "context cost: ~0 tokens (resolved outside the model)" });
+    return lines;
+  }
+  if (data.type === "runtime") {
+    lines.push({ text: "context cost: ~0 tokens (never loaded)" });
+    return lines;
+  }
+  if (!cost) return lines;
+  lines.push({
+    text: `context cost: ~${cost.sessionStartTokens} tokens at session start, ~${cost.deferredTokens} deferred`,
+    bold: true,
+  });
+  if (cost.note) lines.push({ text: cost.note, dim: true });
+  return lines;
+}
+
+/** The "what / who / when" explanation block for a node. */
+export function explainLines(data: NodeData): DetailLine[] {
+  const ex = explainItem(explainInputFor(data));
+  return [
+    { text: `what: ${ex.whatIsThis}` },
+    { text: `who triggers it: ${ex.whoTriggers}` },
+    { text: `when it costs context: ${ex.whenItCostsContext}`, dim: true },
+  ];
+}
+
 /** Strip terminal control characters from every line's text before display. */
 function sanitize(lines: DetailLine[]): DetailLine[] {
   return lines.map((l) => ({ ...l, text: stripControl(l.text) }));
@@ -69,6 +143,8 @@ export function buildDetail(data: NodeData): DetailLine[] {
     lines.push({ text: `level: ${data.level}` });
     lines.push({ text: `load timing: ${t.label}`, bold: true });
     lines.push({ text: t.howItLoads, dim: true });
+    lines.push(...explainLines(data));
+    lines.push(...costLines(data));
     return sanitize(lines);
   }
 
@@ -84,6 +160,8 @@ export function buildDetail(data: NodeData): DetailLine[] {
     lines.push({ text: `hooks: ${s.hookCount}` });
     lines.push({ text: `load timing: ${t.label}`, bold: true });
     lines.push({ text: t.howItLoads, dim: true });
+    lines.push(...explainLines(data));
+    lines.push(...costLines(data));
     return sanitize(lines);
   }
 
@@ -160,5 +238,7 @@ export function buildDetail(data: NodeData): DetailLine[] {
     default:
       break;
   }
+  lines.push(...explainLines(data));
+  lines.push(...costLines(data));
   return sanitize(lines);
 }

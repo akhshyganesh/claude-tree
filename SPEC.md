@@ -33,13 +33,7 @@ if I work here?"
    rule with `paths:` → "loads when a matching file is touched", CLAUDE.md → "loads at
    session start". Exact wording comes from `src/loading-model.ts`, which encodes the
    docs-verified reference in `docs/LOADING_ORDER.md`.
-4. **TUI** (Ink): three areas —
-   - left: tree of levels → categories → items, navigable (↑↓, ←→ collapse/expand, enter);
-   - right: detail pane for the selected item (path, name, description, load semantics,
-     frontmatter summary, override note if the same name exists at another level);
-   - a load-order view (toggle with `o`): the ordered pipeline of what loads when a
-     session starts in this cwd, and what stays dormant until triggered.
-   - `q` quits, `?` help footer always visible.
+4. **TUI** (Ink) — see the v2 section below.
 5. **`--list` mode**: plain-text (no TTY required) dump of the same tree + load order —
    used by tests/CI and non-interactive shells. `--json` emits the raw scan result.
 6. **Conflict/override detection**: same skill/agent/command name at project and user
@@ -56,6 +50,50 @@ if I work here?"
   against the real `~/.claude`. Scanner takes `{cwd, home}` params for that reason.
 - TDD: failing test → code → refactor. Suite green + `tsc --noEmit` clean before done.
 - No network access at runtime. Read-only — never writes to scanned directories.
+
+## v2 — lazygit-style fullscreen TUI
+
+The TUI is a persistent, fullscreen (alternate-screen) multi-panel app modelled on
+lazygit. The root layout fills `stdout.rows`/`columns` exactly; **every pane windows its
+own content** (renders only the visible slice) because a fixed-height Ink/yoga root clips
+overflowing panes and garbles them otherwise. Terminal resize re-reads dimensions on the
+stdout `resize` event.
+
+- **Alt-screen lifecycle**: `runTui` writes `\x1b[?1049h` on start and restores
+  `\x1b[?1049l` via a `finally` **and** a process `exit` handler plus `SIGINT`/`SIGTERM`
+  handlers (which restore then exit), so the terminal is never left corrupted. `runTui`
+  takes injectable `{render, stdout}` deps for testing.
+- **Panels** (numbered; `1`/`2`/`3` or `tab` to focus, focused pane gets a cyan border):
+  1. **Config** — the level → category → item tree (`buildRows`); `←→`/enter expand/collapse.
+  2. **Session start** — the load-order pipeline in docs order; scrollable.
+  3. **Context cost** — total ~tokens at session start, a per-level breakdown, the top-N
+     most expensive items with a proportional unicode bar chart, and the deferred pool.
+  Right side: an always-visible **Detail** pane for the focused Config item.
+- **Keys**: `↑↓` move within the focused pane, `1/2/3`/`tab` switch, `←→`/enter expand
+  (Config), `?` help overlay, `q` quit. The bottom keybar updates contextually.
+
+### Context cost (`src/context-cost.ts`, headless + unit-tested)
+
+Estimates tokens ≈ `ceil(chars/4)` — always labelled an estimate ("~"). Per docs semantics:
+
+- CLAUDE.md/CLAUDE.local.md + one level of resolved `@imports` (import file read relative
+  to the memory file's dir): full body at session start.
+- Unconditional rules: full body at session start. Path-scoped rules: 0 at start, body
+  deferred ("when a matching file is touched").
+- Skills/commands: only the frontmatter **description** counts at session start; the body
+  is deferred to invocation. Both numbers shown.
+- Agents: 0 at start; the whole definition is deferred to spawn.
+- Settings/hooks: 0 tokens (hooks run outside the model). MCP: 0 measured, labelled
+  "varies" (tool schemas add tokens but aren't statically measurable).
+
+`ScanResult` items carry `contextCost: {sessionStartTokens, deferredTokens, note?}`, decorated
+during the scan. `summarizeContextCost(scan)` aggregates for Panel 3, `--list`, and `--json`.
+
+### Explain everything / "who invokes it"
+
+`loading-model.ts` exposes `explainItem(input)` returning data strings (`whatIsThis`,
+`whoTriggers`, `whenItCostsContext`) per item type — reused by the Detail pane, `--list`
+and `--json`, and unit-tested independently of the UI.
 
 ## Non-goals (v1)
 

@@ -40,7 +40,7 @@ if I work here?"
    - a load-order view (toggle with `o`): the ordered pipeline of what loads when a
      session starts in this cwd, and what stays dormant until triggered.
    - `q` quits, `?` help footer always visible.
-5. **`--list` mode**: plain-text (no TTI required) dump of the same tree + load order —
+5. **`--list` mode**: plain-text (no TTY required) dump of the same tree + load order —
    used by tests/CI and non-interactive shells. `--json` emits the raw scan result.
 6. **Conflict/override detection**: same skill/agent/command name at project and user
    level → mark winner per docs precedence.

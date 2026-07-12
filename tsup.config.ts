@@ -7,7 +7,9 @@ export default defineConfig({
   format: ["esm"],
   target: "node18",
   clean: true,
-  dts: false,
+  // Emit .d.ts only for the public library entry — the JSX tui entry is not
+  // part of the exported API and its types add nothing for consumers.
+  dts: { entry: { index: "src/index.ts" } },
   shims: false,
   banner: {},
 });

@@ -56,6 +56,18 @@ function isDir(p: string): boolean {
   }
 }
 
+/**
+ * True if the path resolves to a regular file. Uses statSync (not the Dirent
+ * flag) so symlinks pointing at files are followed; broken links return false.
+ */
+function isFile(p: string): boolean {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** First non-empty, non-heading line of a markdown body — the description fallback. */
 function firstParagraph(body: string): string {
   for (const raw of body.split("\n")) {
@@ -68,13 +80,19 @@ function firstParagraph(body: string): string {
   return "";
 }
 
-/** @import targets in a memory file (one level, not followed recursively). */
+/**
+ * @import targets in a memory file (one level, not followed recursively).
+ * Per Claude Code @import semantics, an import is a line-leading `@` followed by
+ * a path-like target (contains `/` or ends `.md`). This deliberately skips prose
+ * `@mentions` like package names (`@anthropic-ai/sdk`) that aren't at line start.
+ */
 function findImports(text: string): string[] {
   const out: string[] = [];
-  const re = /(?:^|\s)@([^\s]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1]) out.push(m[1]);
+  for (const raw of text.split("\n")) {
+    const m = /^\s*@(\S+)/.exec(raw);
+    if (!m || !m[1]) continue;
+    const target = m[1];
+    if (target.includes("/") || target.endsWith(".md")) out.push(target);
   }
   return out;
 }
@@ -153,17 +171,41 @@ const KNOWN_ENTRIES = new Set([
   "workflows",
 ]);
 
-/** Find the project root by walking up from cwd for a .claude/ or .git/ dir. */
-export function findProjectRoot(cwd: string): string | null {
+/**
+ * Find the project root by walking up from cwd for a `.claude/` or `.git/` dir.
+ * `$HOME` is never a project root when its only qualification is `~/.claude`
+ * (a bare user config dir), so running from home doesn't scan the user level
+ * twice. A home dir that is a real project (has `.git`) still qualifies.
+ */
+export function findProjectRoot(cwd: string, home?: string): string | null {
+  const resolvedHome = home ? path.resolve(home) : null;
   let dir = path.resolve(cwd);
   while (true) {
-    if (isDir(path.join(dir, ".claude")) || exists(path.join(dir, ".git"))) {
-      return dir;
+    const hasGit = exists(path.join(dir, ".git"));
+    const hasClaude = isDir(path.join(dir, ".claude"));
+    if (hasGit || hasClaude) {
+      const homeByClaudeOnly = resolvedHome === dir && hasClaude && !hasGit;
+      if (!homeByClaudeOnly) return dir;
     }
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/** Directories from projectRoot down to cwd, inclusive (the memory chain). */
+function ancestorChain(root: string, cwd: string): string[] {
+  const rel = path.relative(root, cwd);
+  const dirs = [root];
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    let cur = root;
+    for (const seg of rel.split(path.sep)) {
+      if (!seg || seg === ".") continue;
+      cur = path.join(cur, seg);
+      dirs.push(cur);
+    }
+  }
+  return dirs;
 }
 
 function parseMemory(
@@ -196,8 +238,8 @@ function parseRules(dir: string, level: Level): RuleItem[] {
   const rulesDir = path.join(dir, "rules");
   const out: RuleItem[] = [];
   for (const ent of safeReadDir(rulesDir)) {
-    if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
     const file = path.join(rulesDir, ent.name);
+    if (!ent.name.endsWith(".md") || !isFile(file)) continue;
     const text = safeRead(file);
     if (text === null) continue;
     const parsed = matter(text);
@@ -228,7 +270,7 @@ function parseSkills(dir: string, level: Level): SkillItem[] {
   const skillsDir = path.join(dir, "skills");
   const out: SkillItem[] = [];
   for (const ent of safeReadDir(skillsDir)) {
-    if (!ent.isDirectory()) continue;
+    if (!isDir(path.join(skillsDir, ent.name))) continue;
     const file = path.join(skillsDir, ent.name, "SKILL.md");
     const text = safeRead(file);
     if (text === null) continue;
@@ -258,8 +300,8 @@ function parseCommands(dir: string, level: Level): SkillItem[] {
   const cmdDir = path.join(dir, "commands");
   const out: SkillItem[] = [];
   for (const ent of safeReadDir(cmdDir)) {
-    if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
     const file = path.join(cmdDir, ent.name);
+    if (!ent.name.endsWith(".md") || !isFile(file)) continue;
     const text = safeRead(file);
     if (text === null) continue;
     const parsed = matter(text);
@@ -292,11 +334,11 @@ function parseAgentsRecursive(
 ): void {
   for (const ent of safeReadDir(agentsDir)) {
     const full = path.join(agentsDir, ent.name);
-    if (ent.isDirectory()) {
+    if (isDir(full)) {
       parseAgentsRecursive(full, level, out);
       continue;
     }
-    if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
+    if (!ent.name.endsWith(".md") || !isFile(full)) continue;
     const text = safeRead(full);
     if (text === null) continue;
     const parsed = matter(text);
@@ -337,8 +379,8 @@ function parseGenericDir(
   const target = path.join(dir, sub);
   const out: GenericItem[] = [];
   for (const ent of safeReadDir(target)) {
-    if (!ent.isFile()) continue;
     const file = path.join(target, ent.name);
+    if (!isFile(file)) continue;
     out.push({
       name: ent.name,
       description: `${sub} file`,
@@ -555,7 +597,7 @@ function resolveConflicts<T extends { name: string; level: Level; override: impo
 export function scan(opts: ScanOptions): ScanResult {
   const cwd = path.resolve(opts.cwd);
   const home = path.resolve(opts.home);
-  const projectRoot = findProjectRoot(cwd);
+  const projectRoot = findProjectRoot(cwd, home);
   const managedRoot = opts.managedRoot ?? null;
 
   const levels: Record<Level, LevelInventory> = {
@@ -625,30 +667,44 @@ export function scan(opts: ScanOptions): ScanResult {
   );
 
   // Project level (<root>/.claude + <root>/CLAUDE.md + <root>/.mcp.json).
-  if (projectRoot) {
-    const projClaude = path.join(projectRoot, ".claude");
+  // Skip entirely when the project's .claude dir IS the user's .claude dir
+  // (e.g. running from $HOME): the user level already covers it, so treating it
+  // as a distinct project would double-scan and flag self-overrides.
+  const projClaude = projectRoot ? path.join(projectRoot, ".claude") : null;
+  const overlapsUser =
+    projClaude !== null && path.resolve(projClaude) === path.resolve(userClaude);
+  if (projectRoot && projClaude && !overlapsUser) {
     scanClaudeDir(projClaude, "project", levels.project, levels.local);
-    const projMemory = parseMemory(
-      path.join(projectRoot, "CLAUDE.md"),
-      "project",
-      "CLAUDE.md",
-    );
-    if (projMemory) {
-      levels.project.present = true;
-      if (!levels.project.roots.includes(projectRoot))
-        levels.project.roots.push(projectRoot);
-      levels.project.memory.push(projMemory);
-    }
-    const projLocalMemory = parseMemory(
-      path.join(projectRoot, "CLAUDE.local.md"),
-      "local",
-      "CLAUDE.local.md",
-    );
-    if (projLocalMemory) {
-      levels.local.present = true;
-      if (!levels.local.roots.includes(projectRoot))
-        levels.local.roots.push(projectRoot);
-      levels.local.memory.push(projLocalMemory);
+    // Walk the ancestor chain root → cwd, reading each dir's CLAUDE.md and
+    // CLAUDE.local.md — deeper directories contribute memory too, not just root.
+    // Project memory can live at <dir>/CLAUDE.md AND <dir>/.claude/CLAUDE.md
+    // (LOADING_ORDER.md: "Project | <root>/.claude/ (+ <root>/CLAUDE.md ...)");
+    // when both exist, both load.
+    for (const dir of ancestorChain(projectRoot, cwd)) {
+      for (const memDir of [dir, path.join(dir, ".claude")]) {
+        const projMemory = parseMemory(
+          path.join(memDir, "CLAUDE.md"),
+          "project",
+          "CLAUDE.md",
+        );
+        if (projMemory) {
+          levels.project.present = true;
+          if (!levels.project.roots.includes(dir))
+            levels.project.roots.push(dir);
+          levels.project.memory.push(projMemory);
+        }
+        const projLocalMemory = parseMemory(
+          path.join(memDir, "CLAUDE.local.md"),
+          "local",
+          "CLAUDE.local.md",
+        );
+        if (projLocalMemory) {
+          levels.local.present = true;
+          if (!levels.local.roots.includes(dir))
+            levels.local.roots.push(dir);
+          levels.local.memory.push(projLocalMemory);
+        }
+      }
     }
     levels.project.mcpServers.push(
       ...parseMcpFile(

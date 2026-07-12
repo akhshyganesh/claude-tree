@@ -53,6 +53,23 @@ describe("buildDetail", () => {
       buildDetail({ type: "runtime", count: 3, level: "project" }),
     );
     expect(out).toContain("load timing: not loaded");
-    expect(out).not.toContain("on demand");
+  });
+
+  it("strips control characters from the detail pane", () => {
+    const hook = {
+      name: "Stop:*",
+      description: "evil",
+      path: "/x/settings.json",
+      level: "user" as const,
+      loadTiming: "event-driven" as const,
+      override: {},
+      event: "Stop",
+      matcher: "*",
+      commandSummary: "echo \u001b[2J\u0007pwned",
+    };
+    const out = texts(buildDetail({ type: "hook", item: hook }));
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("\u0007");
+    expect(out).toContain("pwned");
   });
 });

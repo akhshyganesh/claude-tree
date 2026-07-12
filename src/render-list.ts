@@ -1,6 +1,7 @@
 // ABOUTME: Plain-text tree renderer for --list mode and non-interactive shells.
 // ABOUTME: Zero-dependency unicode glyphs; consumes a ScanResult and the load-order phases.
 import { buildLoadOrder, LOAD_TIMINGS } from "./loading-model.js";
+import { stripControl } from "./util.js";
 import type {
   BaseItem,
   Level,
@@ -38,8 +39,9 @@ function overrideNote(item: BaseItem): string {
 }
 
 function line(item: BaseItem): string {
-  const desc = item.description ? ` — ${item.description}` : "";
-  return `${item.name}${desc} ${timingTag(item)}${overrideNote(item)}`;
+  const name = stripControl(item.name);
+  const desc = item.description ? ` — ${stripControl(item.description)}` : "";
+  return `${name}${desc} ${timingTag(item)}${overrideNote(item)}`;
 }
 
 function category(title: string, items: BaseItem[], out: string[]): void {
@@ -100,7 +102,9 @@ export function renderList(scan: ScanResult): string {
       continue;
     }
     for (const it of phase.items) {
-      out.push(`       • ${it.name} [${it.level}] — ${it.detail}`);
+      out.push(
+        `       • ${stripControl(it.name)} [${it.level}] — ${stripControl(it.detail)}`,
+      );
     }
   }
 

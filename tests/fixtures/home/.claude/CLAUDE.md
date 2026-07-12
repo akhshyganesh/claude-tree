@@ -2,4 +2,7 @@
 
 You are a helpful engineering assistant for Akhshy.
 
-See @docs/style.md and @~/.claude/extra.md for more.
+We also depend on the @anthropic-ai/sdk package in prose (not an import).
+
+@docs/style.md
+@~/.claude/extra.md

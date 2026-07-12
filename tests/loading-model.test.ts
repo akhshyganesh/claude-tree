@@ -51,6 +51,15 @@ describe("buildLoadOrder", () => {
     expect(names).toContain("CLAUDE.md");
   });
 
+  it("orders project memory before user memory (user loads last, wins)", () => {
+    const memory = phases[1]!;
+    const projIdx = memory.items.findIndex((i) => i.level === "project");
+    const userIdx = memory.items.findIndex((i) => i.level === "user");
+    expect(projIdx).toBeGreaterThanOrEqual(0);
+    expect(userIdx).toBeGreaterThanOrEqual(0);
+    expect(projIdx).toBeLessThan(userIdx);
+  });
+
   it("puts skills, path-scoped rules, and agents in the dormant phase", () => {
     const dormant = phases[2]!;
     const names = dormant.items.map((i) => i.name);

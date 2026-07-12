@@ -4,6 +4,14 @@
   "description": "Visualize every Claude Code config visible from a directory and when it loads.",
   "type": "module",
   "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "claude-tree": "dist/cli.js"
   },
@@ -11,21 +19,32 @@
     "node": ">=18"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs/LOADING_ORDER.md"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tui",
+    "cli",
+    "config",
+    "visualization",
+    "ink"
   ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@types/react": "^18.3.3",
     "gray-matter": "^4.0.3",
     "ink": "^5.0.1",
     "react": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
     "ink-testing-library": "^4.0.0",
     "tsup": "^8.1.0",
     "typescript": "^5.5.0",

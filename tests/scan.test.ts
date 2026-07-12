@@ -1,8 +1,10 @@
 // ABOUTME: Tests for the pure scan() discovery against fixture home/project directories.
 // ABOUTME: Never touches the real ~/.claude — home is always a fixture path.
 import { fileURLToPath } from "node:url";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { scan } from "../src/scan.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -161,5 +163,145 @@ describe("conflict resolution (asymmetric)", () => {
     const userAgent = r.levels.user.agents.find((a) => a.name === "reviewer")!;
     expect(projAgent.override.overrides).toEqual(["user"]);
     expect(userAgent.override.overriddenBy).toBe("project");
+  });
+});
+
+describe("@import detection", () => {
+  it("ignores mid-line @mentions (e.g. scoped package names)", () => {
+    const r = run();
+    const mem = r.levels.user.memory.find((m) => m.kind === "CLAUDE.md")!;
+    // The fixture mentions @anthropic-ai/sdk in prose — not a line-leading import.
+    expect(mem.imports).not.toContain("anthropic-ai/sdk");
+    expect(mem.imports).toEqual(["docs/style.md", "~/.claude/extra.md"]);
+  });
+});
+
+describe("home/project overlap (blocker)", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  function makeHome(withGit: boolean): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ct-home-"));
+    tmpDirs.push(dir);
+    const claude = path.join(dir, ".claude", "skills", "shared");
+    fs.mkdirSync(claude, { recursive: true });
+    fs.writeFileSync(
+      path.join(claude, "SKILL.md"),
+      "---\nname: shared\ndescription: a user skill\n---\nbody\n",
+    );
+    fs.writeFileSync(
+      path.join(dir, ".claude", "CLAUDE.md"),
+      "# user memory\n\nhi\n",
+    );
+    if (withGit) fs.mkdirSync(path.join(dir, ".git"));
+    return dir;
+  }
+
+  it("running from $HOME leaves the project level absent, no self-overrides", () => {
+    const home = makeHome(false);
+    const r = scan({ cwd: home, home });
+    expect(r.levels.project.present).toBe(false);
+    // The user skill must not be flagged as overriding itself.
+    const skill = r.levels.user.skills.find((s) => s.name === "shared")!;
+    expect(skill.override.overrides).toBeUndefined();
+    expect(skill.override.overriddenBy).toBeUndefined();
+  });
+
+  it("treats project absent when project .claude resolves to the user .claude", () => {
+    // A home dir that IS a real project (has .git) would otherwise resolve as
+    // its own project root; the overlap guard must still suppress it.
+    const home = makeHome(true);
+    const r = scan({ cwd: home, home });
+    expect(r.levels.project.present).toBe(false);
+    const skill = r.levels.user.skills.find((s) => s.name === "shared")!;
+    expect(skill.override.overriddenBy).toBeUndefined();
+  });
+});
+
+describe("ancestor-chain memory", () => {
+  it("reads CLAUDE.md in directories between projectRoot and cwd", () => {
+    const nested = path.join(PROJECT, "packages", "web");
+    const r = scan({ cwd: nested, home: HOME });
+    const paths = r.levels.project.memory.map((m) => m.path);
+    expect(paths).toContain(path.join(PROJECT, "CLAUDE.md"));
+    expect(paths).toContain(path.join(nested, "CLAUDE.md"));
+  });
+
+  it("reads project memory from .claude/CLAUDE.md as well as root CLAUDE.md", () => {
+    const r = run();
+    const paths = r.levels.project.memory.map((m) => m.path);
+    // Both locations exist in the fixture; both must be included.
+    expect(paths).toContain(path.join(PROJECT, "CLAUDE.md"));
+    expect(paths).toContain(path.join(PROJECT, ".claude", "CLAUDE.md"));
+  });
+
+  it("finds project memory when only .claude/CLAUDE.md exists (no root CLAUDE.md)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ct-dotclaude-"));
+    try {
+      fs.mkdirSync(path.join(dir, ".claude"));
+      fs.mkdirSync(path.join(dir, ".git"));
+      fs.writeFileSync(
+        path.join(dir, ".claude", "CLAUDE.md"),
+        "# dot-claude memory\n\nonly here\n",
+      );
+      const r = scan({ cwd: dir, home: HOME });
+      expect(r.levels.project.memory.map((m) => m.path)).toContain(
+        path.join(dir, ".claude", "CLAUDE.md"),
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("symlink handling", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("follows symlinked skill dirs, rule files, and agent files", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ct-sym-"));
+    tmpDirs.push(home);
+    const claude = path.join(home, ".claude");
+    // Real skill dir + a symlink to it under a different name.
+    const realSkill = path.join(claude, "skills", "real");
+    fs.mkdirSync(realSkill, { recursive: true });
+    fs.writeFileSync(
+      path.join(realSkill, "SKILL.md"),
+      "---\nname: real\ndescription: real skill\n---\nbody\n",
+    );
+    fs.symlinkSync(realSkill, path.join(claude, "skills", "linked"), "dir");
+    // Real rule + symlinked rule file.
+    const rules = path.join(claude, "rules");
+    fs.mkdirSync(rules, { recursive: true });
+    const realRule = path.join(rules, "real.md");
+    fs.writeFileSync(realRule, "# real rule\n\nalways on\n");
+    fs.symlinkSync(realRule, path.join(rules, "linked.md"));
+    // Real agent + symlinked agent file.
+    const agents = path.join(claude, "agents");
+    fs.mkdirSync(agents, { recursive: true });
+    const realAgent = path.join(agents, "real.md");
+    fs.writeFileSync(
+      realAgent,
+      "---\nname: realagent\ndescription: an agent\n---\nbody\n",
+    );
+    fs.symlinkSync(realAgent, path.join(agents, "linked.md"));
+
+    const r = scan({ cwd: home, home });
+    expect(r.levels.user.skills.map((s) => s.name).sort()).toEqual([
+      "real",
+      "real",
+    ]);
+    expect(r.levels.user.rules.length).toBe(2);
+    expect(r.levels.user.agents.length).toBe(2);
   });
 });

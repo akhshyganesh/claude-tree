@@ -134,6 +134,11 @@ export const loadingModel = {
 // Levels ordered lowest → highest locality for stable, readable output.
 const LEVEL_ORDER: Level[] = ["managed", "user", "project", "local"];
 
+// Memory (CLAUDE.md) injection order, first-loaded → last (LOADING_ORDER.md
+// §"Memory"): managed → project ancestor chain (+ its CLAUDE.local.md) → user
+// last (closest to the user = effectively highest priority).
+const MEMORY_LEVEL_ORDER: Level[] = ["managed", "project", "local", "user"];
+
 function toPhaseItem(item: BaseItem, detail: string): LoadPhaseItem {
   return {
     name: item.name,
@@ -171,17 +176,6 @@ export function buildLoadOrder(scan: ScanResult): LoadPhase[] {
       config.push(toPhaseItem(h, `hook ${h.event} — ${h.commandSummary}`));
     }
 
-    for (const m of inv.memory) {
-      const detail =
-        m.imports.length > 0
-          ? `${m.kind}, ${m.imports.length} @import(s)`
-          : m.kind;
-      memory.push(toPhaseItem(m, detail));
-    }
-    for (const r of inv.rules) {
-      if (!r.pathScoped) memory.push(toPhaseItem(r, "unconditional rule"));
-    }
-
     for (const r of inv.rules) {
       if (r.pathScoped) {
         dormant.push(toPhaseItem(r, `path-scoped rule: ${r.globs.join(", ")}`));
@@ -195,6 +189,23 @@ export function buildLoadOrder(scan: ScanResult): LoadPhase[] {
     }
     for (const a of inv.agents) {
       dormant.push(toPhaseItem(a, "subagent definition"));
+    }
+  }
+
+  // Memory injection is ordered separately: docs put project memory BEFORE user
+  // memory (user is closest to the user, so it loads last / wins).
+  for (const level of MEMORY_LEVEL_ORDER) {
+    const inv = scan.levels[level];
+    if (!inv.present) continue;
+    for (const m of inv.memory) {
+      const detail =
+        m.imports.length > 0
+          ? `${m.kind}, ${m.imports.length} @import(s)`
+          : m.kind;
+      memory.push(toPhaseItem(m, detail));
+    }
+    for (const r of inv.rules) {
+      if (!r.pathScoped) memory.push(toPhaseItem(r, "unconditional rule"));
     }
   }
 

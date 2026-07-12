@@ -1,6 +1,7 @@
 // ABOUTME: Pure detail-pane builder — turns a selected NodeData into display lines.
 // ABOUTME: No Ink/React; unit-testable. Load-timing wording comes from loading-model LOAD_TIMINGS.
 import { LOAD_TIMINGS } from "../loading-model.js";
+import { stripControl } from "../util.js";
 import type { NodeData } from "./tree.js";
 
 export interface DetailLine {
@@ -53,6 +54,11 @@ function timingFor(data: NodeData): Timing {
   }
 }
 
+/** Strip terminal control characters from every line's text before display. */
+function sanitize(lines: DetailLine[]): DetailLine[] {
+  return lines.map((l) => ({ ...l, text: stripControl(l.text) }));
+}
+
 /** Build the ordered detail lines for the right pane. */
 export function buildDetail(data: NodeData): DetailLine[] {
   const lines: DetailLine[] = [];
@@ -63,7 +69,7 @@ export function buildDetail(data: NodeData): DetailLine[] {
     lines.push({ text: `level: ${data.level}` });
     lines.push({ text: `load timing: ${t.label}`, bold: true });
     lines.push({ text: t.howItLoads, dim: true });
-    return lines;
+    return sanitize(lines);
   }
 
   if (data.type === "settings") {
@@ -78,7 +84,7 @@ export function buildDetail(data: NodeData): DetailLine[] {
     lines.push({ text: `hooks: ${s.hookCount}` });
     lines.push({ text: `load timing: ${t.label}`, bold: true });
     lines.push({ text: t.howItLoads, dim: true });
-    return lines;
+    return sanitize(lines);
   }
 
   const item = data.item;
@@ -154,5 +160,5 @@ export function buildDetail(data: NodeData): DetailLine[] {
     default:
       break;
   }
-  return lines;
+  return sanitize(lines);
 }

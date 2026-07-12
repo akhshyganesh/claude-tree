@@ -1,8 +1,10 @@
 // ABOUTME: Tests for the plain-text --list renderer — asserts on specific lines, not snapshots.
 // ABOUTME: Confirms absent levels, timing tags, and override notes render as expected.
 import { fileURLToPath } from "node:url";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { scan } from "../src/scan.js";
 import { renderList } from "../src/render-list.js";
 
@@ -66,5 +68,38 @@ describe("renderList", () => {
     expect(out).toContain("1. Config resolution");
     expect(out).toContain("2. Memory injection");
     expect(out).toContain("3. Dormant until triggered");
+  });
+});
+
+describe("renderList control-character stripping", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("strips escape sequences from hook commands before rendering", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ct-ctl-"));
+    tmpDirs.push(home);
+    const claude = path.join(home, ".claude");
+    fs.mkdirSync(claude, { recursive: true });
+    // A hook command carrying a raw ESC + bell — a terminal-injection attempt.
+    const evil = "echo \u001b[2J\u0007pwned";
+    fs.writeFileSync(
+      path.join(claude, "settings.json"),
+      JSON.stringify({
+        hooks: {
+          Stop: [{ hooks: [{ type: "command", command: evil }] }],
+        },
+      }),
+    );
+
+    const out = renderList(scan({ cwd: home, home }));
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("\u0007");
+    // The visible text survives, only the control bytes are removed.
+    expect(out).toContain("pwned");
   });
 });

@@ -1,7 +1,11 @@
 // ABOUTME: Plain-text tree renderer for --list mode and non-interactive shells.
 // ABOUTME: Zero-dependency unicode glyphs; consumes a ScanResult and the load-order phases.
 import { buildLoadOrder, LOAD_TIMINGS } from "./loading-model.js";
-import { summarizeContextCost, costBar } from "./context-cost.js";
+import {
+  summarizeContextCost,
+  contextCostHeadline,
+  costBar,
+} from "./context-cost.js";
 import { stripControl } from "./util.js";
 import type {
   BaseItem,
@@ -121,12 +125,20 @@ export function renderList(scan: ScanResult): string {
   return out.join("\n");
 }
 
-/** The context-cost summary section (estimates; ~tokens ≈ chars/4). */
+/**
+ * The context-cost summary section. Estimates use Claude's tokenizer
+ * (markdown ÷4.6, code ÷3.6, json ÷4.2).
+ */
 function renderContextCost(scan: ScanResult, out: string[]): void {
   const summary = summarizeContextCost(scan);
-  out.push("Context cost (estimate, ~tokens ≈ chars/4):");
   out.push(
-    `  ~${summary.totalSessionStart} tokens injected at session start · ~${summary.totalDeferred} tokens deferred`,
+    "Context cost (~tokens, Claude tokenizer estimate (markdown ÷4.6, code ÷3.6, json ÷4.2)):",
+  );
+  for (const h of contextCostHeadline(summary)) {
+    out.push(`  ${h.text}`);
+  }
+  out.push(
+    `  your config: ~${summary.totalSessionStart} tokens at session start · ~${summary.totalDeferred} tokens deferred`,
   );
   if (summary.perLevel.length > 0) {
     out.push("  per level (session start):");

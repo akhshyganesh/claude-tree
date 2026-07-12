@@ -34,10 +34,14 @@ detail pane on the right:
 - **2 · Session start** — the ordered pipeline of what happens when a session starts in
   this directory: config resolution → memory injection → everything that stays dormant
   until triggered. Scrollable.
-- **3 · Context cost** — an estimate (~tokens ≈ chars/4) of how much each config injects:
-  the total tokens loaded at **session start**, a per-level breakdown, the most expensive
-  items as a proportional bar chart, and the **deferred** pool that only loads on
-  invocation / spawn / a matching file touch.
+- **3 · Context cost** — answers "how much context does a session start with here?" It
+  leads with Claude Code's fixed **baseline** (~5.2k–5.7k tokens: system prompt, built-in
+  tools, env snapshot), then what **your config adds**, any auto-loaded project
+  **MEMORY.md**, and the resulting **session-start range**. Token counts are estimates using
+  Claude's tokenizer (markdown ÷4.6, code ÷3.6, json ÷4.2). Below that: a per-level
+  breakdown, the most expensive items as a proportional bar chart, and the **deferred** pool
+  that only loads on invocation / spawn / a matching file touch. A directory with no config
+  still shows the baseline, never a bare 0.
 - **Detail pane** — path, frontmatter summary (model, tools, path globs, invocation
   flags), a plain-English "what is this", "who triggers it" (you vs the model vs the
   harness), "when it costs context", the load explanation, per-item token cost, and

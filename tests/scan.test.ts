@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { scan } from "../src/scan.js";
+import { scan, projectSlug } from "../src/scan.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HOME = path.join(here, "fixtures", "home");
@@ -256,6 +256,66 @@ describe("ancestor-chain memory", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("auto-memory discovery (MEMORY.md)", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("derives the project slug from the absolute path (/ → -)", () => {
+    expect(projectSlug("/home/x/ws/proj")).toBe("-home-x-ws-proj");
+  });
+
+  it("loads ~/.claude/projects/<slug>/memory/MEMORY.md as a user-level auto memory", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ct-am-home-"));
+    const proj = fs.mkdtempSync(path.join(os.tmpdir(), "ct-am-proj-"));
+    tmpDirs.push(home, proj);
+    fs.mkdirSync(path.join(proj, ".git"));
+    const memDir = path.join(
+      home,
+      ".claude",
+      "projects",
+      projectSlug(proj),
+      "memory",
+    );
+    fs.mkdirSync(memDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(memDir, "MEMORY.md"),
+      "# project memory\n\nremember the build steps\n",
+    );
+
+    const r = scan({ cwd: proj, home });
+    const auto = r.levels.user.memory.find((m) => m.autoMemory);
+    expect(auto).toBeDefined();
+    expect(auto!.kind).toBe("MEMORY.md");
+    expect(auto!.name).toBe("auto memory (MEMORY.md)");
+    expect(auto!.loadTiming).toBe("session-start");
+    expect(auto!.contextCost!.sessionStartTokens).toBeGreaterThan(0);
+    expect(auto!.contextCost!.note).toContain("on demand");
+  });
+
+  it("adds no auto memory when there is no MEMORY.md for the project", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ct-am-home2-"));
+    const proj = fs.mkdtempSync(path.join(os.tmpdir(), "ct-am-proj2-"));
+    tmpDirs.push(home, proj);
+    fs.mkdirSync(path.join(proj, ".git"));
+    const r = scan({ cwd: proj, home });
+    expect(r.levels.user.memory.some((m) => m.autoMemory)).toBe(false);
+  });
+
+  it("adds no auto memory when there is no project root (non-git cwd)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ct-am-home3-"));
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "ct-am-bare-"));
+    tmpDirs.push(home, bare);
+    const r = scan({ cwd: bare, home });
+    expect(r.projectRoot).toBeNull();
+    expect(r.levels.user.memory.some((m) => m.autoMemory)).toBe(false);
   });
 });
 

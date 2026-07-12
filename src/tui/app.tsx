@@ -9,7 +9,11 @@ import {
   SKILL_PRECEDENCE,
   AGENT_PRECEDENCE,
 } from "../loading-model.js";
-import { summarizeContextCost, costBar } from "../context-cost.js";
+import {
+  summarizeContextCost,
+  contextCostHeadline,
+  costBar,
+} from "../context-cost.js";
 import { buildRows, levelId, LEVEL_ORDER, type Row } from "./tree.js";
 import { buildDetail } from "./detail.js";
 
@@ -143,13 +147,16 @@ function sessionLines(scan: ScanResult): PanelLine[] {
 function costLines(scan: ScanResult): PanelLine[] {
   const summary = summarizeContextCost(scan);
   const lines: PanelLine[] = [];
-  lines.push({
-    text: `~${summary.totalSessionStart} tokens at session start`,
-    bold: true,
-    color: "cyan",
-  });
+  for (const h of contextCostHeadline(summary)) {
+    lines.push({
+      text: h.text,
+      bold: h.emphasis,
+      color: h.emphasis ? "cyan" : undefined,
+      dim: h.dim,
+    });
+  }
   lines.push({ text: `~${summary.totalDeferred} tokens deferred (dormant pool)`, dim: true });
-  lines.push({ text: "estimate: ~tokens ≈ chars/4", dim: true });
+  lines.push({ text: "estimate: Claude tokenizer (md ÷4.6, code ÷3.6, json ÷4.2)", dim: true });
   lines.push({ text: "" });
   lines.push({ text: "per level (session start):", bold: true });
   if (summary.perLevel.length === 0) {

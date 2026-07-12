@@ -35,6 +35,19 @@ CLAUDE.md then CLAUDE.local.md → user `~/.claude/CLAUDE.md`. Later = closer to
 effectively higher priority. `@import`s resolve recursively (max 4 hops) at launch and
 cost context. Nested (below-cwd) CLAUDE.md files load on demand when files there are read.
 
+## Auto-memory (`MEMORY.md`)
+
+At session start Claude Code also injects a per-project auto-memory file, if one
+exists, from the user's runtime dir:
+
+`~/.claude/projects/<slug>/memory/MEMORY.md`
+
+- **Slug** = the project root's absolute path with every `/` replaced by `-`
+  (e.g. `/home/x/ws/proj` → `-home-x-ws-proj`). When there is no project root
+  (a non-git, no-`.claude` cwd), there is no slug and no auto-memory.
+- Only the **first 200 lines OR 25KB** (whichever comes first) is injected at
+  session start. Additional topic files under `memory/` load **on demand**.
+
 ## Rules (`rules/**/*.md`, user then project)
 
 - No `paths:` frontmatter → loads at session start (like CLAUDE.md).
@@ -66,6 +79,22 @@ Tool listings connect at session start.
 Registered from all settings scopes at session start (managed > project > user for
 conflicts); executed event-driven (PreToolUse, PostToolUse, Stop, ...). They cost no
 context; they run deterministically outside the model.
+
+## Context-cost estimation
+
+Token counts are **estimates** using Claude's tokenizer, which is denser than
+GPT's (and denser still for code): markdown ÷4.6, source code ÷3.6, JSON ÷4.2,
+other text ÷4.4 chars per token. Exact counts need Anthropic's `count-tokens`
+API (free, but networked) — a future `--count-tokens` flag could call it; we do
+not make network requests today.
+
+**Baseline overhead.** Before any user config, Claude Code itself occupies
+context: system prompt + built-in tool definitions ≈ 4,200t, environment/git
+snapshot ≈ 280t, and bundled skill descriptions + MCP tool names (which vary) —
+a fixed baseline of ≈ **5,200–5,700 tokens**
+(source: code.claude.com/docs/en/context-window, verified 2026-07-12). The
+estimated session start is `baseline + your config + auto-memory`, shown as a
+min–max range. When a directory adds no config, only the baseline applies.
 
 ## Load-timing summary (the core visualization)
 

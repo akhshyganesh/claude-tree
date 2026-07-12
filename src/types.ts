@@ -23,7 +23,8 @@ export interface OverrideInfo {
 }
 
 /**
- * Estimated context cost of an item, in tokens (~chars/4). Always an estimate.
+ * Estimated context cost of an item, in tokens (~chars per content-type
+ * divisor; see context-cost.ts). Always an estimate.
  * `sessionStartTokens` = injected into context when a session starts here;
  * `deferredTokens` = only paid later (on invocation / spawn / matching file).
  */
@@ -48,11 +49,13 @@ export interface BaseItem {
 }
 
 export interface MemoryFile extends BaseItem {
-  kind: "CLAUDE.md" | "CLAUDE.local.md";
+  kind: "CLAUDE.md" | "CLAUDE.local.md" | "MEMORY.md";
   deprecated: boolean;
   /** Raw @import targets found in the file, not recursively followed. */
   imports: string[];
   firstParagraph: string;
+  /** True for the auto-discovered ~/.claude/projects/<slug>/memory/MEMORY.md. */
+  autoMemory?: boolean;
 }
 
 export interface RuleItem extends BaseItem {

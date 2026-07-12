@@ -70,9 +70,11 @@ describe("renderList", () => {
     expect(out).toContain("3. Dormant until triggered");
   });
 
-  it("renders a context-cost summary section with totals and a bar chart", () => {
-    expect(out).toContain("Context cost (estimate");
-    expect(out).toContain("tokens injected at session start");
+  it("renders a context-cost summary section with the baseline, range, and a bar chart", () => {
+    expect(out).toContain("Context cost (~tokens, Claude tokenizer estimate");
+    expect(out).toContain("Claude Code baseline ~5.2k–5.7k");
+    expect(out).toContain("= session start ~");
+    expect(out).toContain("your config: ~");
     expect(out).toContain("most expensive at session start:");
     expect(out).toContain("█");
   });
@@ -82,6 +84,17 @@ describe("renderList", () => {
       (l) => l.includes("format-code") && l.includes("t start"),
     );
     expect(skillLine).toBeDefined();
+  });
+});
+
+describe("renderList baseline with no config", () => {
+  it("shows the baseline and 'adds no config context' when nothing loads", () => {
+    const out = renderList(
+      scan({ cwd: "/nonexistent/xyz", home: "/nonexistent/home" }),
+    );
+    expect(out).toContain("Claude Code baseline ~5.2k–5.7k");
+    expect(out).toContain("this directory adds no config context");
+    expect(out).toContain("= session start ~5.2k–5.7k");
   });
 });
 

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import matter from "gray-matter";
 import {
   agentCost,
+  autoMemoryCost,
   memoryCost,
   mcpCost,
   noContextCost,
@@ -199,6 +200,52 @@ export function findProjectRoot(cwd: string, home?: string): string | null {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/**
+ * Claude Code's slug for a project root: its absolute path with every `/`
+ * replaced by `-` (e.g. /home/x/ws/proj → -home-x-ws-proj). Used to locate the
+ * project's runtime dir under ~/.claude/projects/.
+ */
+export function projectSlug(projectRoot: string): string {
+  return path.resolve(projectRoot).replace(/\//g, "-");
+}
+
+/**
+ * The auto-loaded MEMORY.md for a project, if one exists at
+ * ~/.claude/projects/<slug>/memory/MEMORY.md. Claude Code injects only its
+ * first slice (200 lines / 25KB) at session start; topic files load on demand.
+ * Returns null when there's no project root or no MEMORY.md.
+ */
+function parseAutoMemory(
+  home: string,
+  projectRoot: string | null,
+): MemoryFile | null {
+  if (!projectRoot) return null;
+  const file = path.join(
+    home,
+    ".claude",
+    "projects",
+    projectSlug(projectRoot),
+    "memory",
+    "MEMORY.md",
+  );
+  const text = safeRead(file);
+  if (text === null) return null;
+  return {
+    name: "auto memory (MEMORY.md)",
+    description: `auto-loaded project memory for ${projectRoot}`,
+    path: file,
+    level: "user",
+    loadTiming: "session-start",
+    override: {},
+    contextCost: autoMemoryCost(text),
+    kind: "MEMORY.md",
+    deprecated: false,
+    imports: [],
+    firstParagraph: firstParagraph(text),
+    autoMemory: true,
+  };
 }
 
 /** Directories from projectRoot down to cwd, inclusive (the memory chain). */
@@ -697,6 +744,14 @@ export function scan(opts: ScanOptions): ScanResult {
   levels.user.mcpServers.push(
     ...parseMcpFile(path.join(home, ".claude.json"), "user", "~/.claude.json"),
   );
+  // Auto-loaded MEMORY.md for the resolved project root (a user-level item).
+  const autoMemory = parseAutoMemory(home, projectRoot);
+  if (autoMemory) {
+    levels.user.present = true;
+    if (!levels.user.roots.includes(userClaude))
+      levels.user.roots.push(userClaude);
+    levels.user.memory.push(autoMemory);
+  }
 
   // Project level (<root>/.claude + <root>/CLAUDE.md + <root>/.mcp.json).
   // Skip entirely when the project's .claude dir IS the user's .claude dir

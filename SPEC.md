@@ -74,10 +74,18 @@ stdout `resize` event.
 
 ### Context cost (`src/context-cost.ts`, headless + unit-tested)
 
-Estimates tokens ≈ `ceil(chars/4)` — always labelled an estimate ("~"). Per docs semantics:
+Estimates tokens per content type via `estimateTokens(chars, kind)` — always labelled an
+estimate ("~"). Claude's tokenizer is denser than GPT's (denser still for code), so each
+kind gets its own divisor: markdown ÷4.6, code ÷3.6, JSON ÷4.2, other text ÷4.4. Call sites
+pick the kind by file type (config markdown → `markdown`). Exact counts would need
+Anthropic's `count-tokens` API (free but networked) — a future `--count-tokens` flag; no
+network today. Per docs semantics:
 
 - CLAUDE.md/CLAUDE.local.md + one level of resolved `@imports` (import file read relative
   to the memory file's dir): full body at session start.
+- **Auto-memory** `~/.claude/projects/<slug>/memory/MEMORY.md` (slug = project root path
+  with `/`→`-`): only its first 200 lines / 25KB inject at session start; topic files load
+  on demand. Surfaced as a user-level `memory` item and accounted separately from config.
 - Unconditional rules: full body at session start. Path-scoped rules: 0 at start, body
   deferred ("when a matching file is touched").
 - Skills/commands: only the frontmatter **description** counts at session start; the body
@@ -86,8 +94,18 @@ Estimates tokens ≈ `ceil(chars/4)` — always labelled an estimate ("~"). Per 
 - Settings/hooks: 0 tokens (hooks run outside the model). MCP: 0 measured, labelled
   "varies" (tool schemas add tokens but aren't statically measurable).
 
+**Baseline overhead.** `CLAUDE_CODE_BASELINE` (≈ 5,200–5,700 tokens: system prompt +
+built-in tools ≈ 4,200t, env/git snapshot ≈ 280t, bundled skill descriptions + MCP tool
+names vary; source code.claude.com/docs/en/context-window) is the context Claude Code holds
+before any user config. Panel 3 and `--list` render, in order: the baseline range, "your
+config adds ~X", "auto memory ~Y" (when present), and "= session start ~(range)" =
+`baseline + config + auto-memory` — then the per-level breakdown, bar chart, and deferred
+pool. With no config, they still show the baseline plus "this directory adds no config
+context".
+
 `ScanResult` items carry `contextCost: {sessionStartTokens, deferredTokens, note?}`, decorated
-during the scan. `summarizeContextCost(scan)` aggregates for Panel 3, `--list`, and `--json`.
+during the scan. `summarizeContextCost(scan)` aggregates (baseline, config total, auto-memory,
+session-start range) for Panel 3, `--list`, and `--json`.
 
 ### Explain everything / "who invokes it"
 

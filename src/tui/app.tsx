@@ -20,8 +20,10 @@ import {
 import { MODELS, DEFAULT_MODEL_ID, gaugeFor } from "../models.js";
 import {
   collectMemories,
+  readContentLines,
   MEMORY_MERGE_NOTE,
 } from "../render-list.js";
+import type { NodeData } from "./tree.js";
 import { buildRows, levelId, LEVEL_ORDER, type Row } from "./tree.js";
 import { buildDetail } from "./detail.js";
 
@@ -286,6 +288,29 @@ function detailLines(current: Row | undefined): PanelLine[] {
   }));
 }
 
+/** File path behind a tree node, when it points at a real file. */
+function nodePath(data: NodeData | undefined): string | null {
+  if (!data || data.type === "runtime") return null;
+  return data.item.path;
+}
+
+/** Fullscreen file-viewer lines: header + the file's contents. */
+function fileViewLines(path: string): PanelLine[] {
+  const { lines, truncated } = readContentLines(path, 1000);
+  const out: PanelLine[] = [
+    { text: path, bold: true, color: "cyan" },
+    { text: " " },
+  ];
+  if (lines.length === 0) {
+    out.push({ text: "(empty file, or not readable)", dim: true });
+    return out;
+  }
+  for (const l of lines) out.push({ text: l });
+  if (truncated > 0)
+    out.push({ text: `… ${truncated} more line(s) not shown`, dim: true });
+  return out;
+}
+
 /** The Memories overlay: every memory file in merge order, like --memories. */
 function memoriesLines(scan: ScanResult): PanelLine[] {
   const lines: PanelLine[] = [
@@ -344,7 +369,8 @@ function memoriesLines(scan: ScanResult): PanelLine[] {
 function helpLines(): PanelLine[] {
   return [
     { text: "claude-tree — help", bold: true, color: "cyan" },
-    { text: "1/2/3 or tab focus panel · ↑↓ move/scroll · ←→/enter expand (Config)" },
+    { text: "1/2/3 or tab focus panel · ↑↓ move/scroll · ←→ expand (Config)" },
+    { text: "enter on any item opens the file fullscreen so you can read its contents" },
     { text: "m switch gauge model · M memories view · q quit · ? close help" },
     { text: "  M shows every memory file Claude loads here, in merge order (like --memories).", dim: true },
     { text: " " },
@@ -384,11 +410,10 @@ const PANEL_TITLES: Record<PanelId, string> = {
 };
 
 function keybar(panel: PanelId): string {
-  const common =
-    "1/2/3·tab switch · ↑↓ move · m model · M memories · q quit · ? help";
-  if (panel === 1) return `[Config] ←→/enter expand · ${common}`;
-  if (panel === 2) return `[Load pipeline] scroll · ${common}`;
-  return `[Context cost] scroll · ${common}`;
+  const common = "1/2/3 panels · ↑↓ · m model · M memories · ? help · q quit";
+  if (panel === 1) return `[Config] ←→ expand · ⏎ open file · ${common}`;
+  if (panel === 2) return `[Load pipeline] ${common}`;
+  return `[Context cost] ${common}`;
 }
 
 export function App({ scan }: { scan: ScanResult }): React.ReactElement {
@@ -402,7 +427,10 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   const [sesOff, setSesOff] = useState(0);
   const [costOff, setCostOff] = useState(0);
   const [helpOff, setHelpOff] = useState(0);
-  const [overlay, setOverlay] = useState<"none" | "help" | "memories">("none");
+  const [overlay, setOverlay] = useState<"none" | "help" | "memories" | "file">(
+    "none",
+  );
+  const [filePath, setFilePath] = useState<string | null>(null);
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
   // Bumped on terminal resize so we re-read stdout dimensions and re-render.
   const [, setResizeTick] = useState(0);
@@ -449,6 +477,13 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     () => wrapLines(memoriesLines(scan), Math.max(10, cols - 4)),
     [scan, cols],
   );
+  const fileL = useMemo(
+    () =>
+      filePath
+        ? wrapLines(fileViewLines(filePath), Math.max(10, cols - 4))
+        : [],
+    [filePath, cols],
+  );
 
   useInput((input, key) => {
     if (input === "q" || (key.ctrl && input === "c")) {
@@ -479,9 +514,15 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
       return;
     }
     if (overlay !== "none") {
-      const len = overlay === "help" ? helpL.length : memL.length;
+      const len =
+        overlay === "help"
+          ? helpL.length
+          : overlay === "memories"
+            ? memL.length
+            : fileL.length;
       if (key.upArrow) setHelpOff((s) => Math.max(0, s - 1));
       if (key.downArrow) setHelpOff((s) => Math.min(len - 1, s + 1));
+      if (key.escape || key.return || key.leftArrow) setOverlay("none");
       return;
     }
 
@@ -510,6 +551,16 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     const row = rows[cfgClamped];
     if (!row) return;
     if (key.rightArrow || key.return) {
+      // Enter on a leaf item opens the file itself, fullscreen.
+      if (key.return && !row.expandable) {
+        const p = nodePath(row.data);
+        if (p) {
+          setFilePath(p);
+          setOverlay("file");
+          setHelpOff(0);
+        }
+        return;
+      }
       if (row.expandable && !expanded.has(row.id)) {
         setExpanded((e) => new Set(e).add(row.id));
       } else if (key.return && row.expandable && expanded.has(row.id)) {
@@ -552,8 +603,14 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
       <Box flexDirection="column" width={cols} height={totalRows}>
         {title}
         <Panel
-          title={overlay === "help" ? "Help" : "Memories"}
-          lines={overlay === "help" ? helpL : memL}
+          title={
+            overlay === "help"
+              ? "Help"
+              : overlay === "memories"
+                ? "Memories"
+                : "File"
+          }
+          lines={overlay === "help" ? helpL : overlay === "memories" ? memL : fileL}
           cursor={-1}
           scrollOffset={helpOff}
           focused
@@ -562,8 +619,10 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
         />
         <Text dimColor wrap="truncate-end">
           {overlay === "help"
-            ? "↑↓ scroll · ? close help · q quit"
-            : "↑↓ scroll · M close memories · q quit"}
+            ? "↑↓ scroll · ? or esc close help · q quit"
+            : overlay === "memories"
+              ? "↑↓ scroll · M or esc close memories · q quit"
+              : "↑↓ scroll · esc/enter close file · q quit"}
         </Text>
       </Box>
     );

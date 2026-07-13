@@ -145,6 +145,29 @@ describe("App panel content", () => {
     unmount();
   });
 
+  it("opens a fullscreen file view on enter for a leaf item", async () => {
+    const { lastFrame, stdin, unmount } = render(<App scan={result} />);
+    await tick();
+    // row0 managed(absent) → row1 User level → row2 memory category → expand → item.
+    stdin.write(DOWN);
+    await tick();
+    stdin.write(DOWN);
+    await tick();
+    stdin.write(RIGHT); // expand memory category
+    await tick();
+    stdin.write(DOWN); // onto the CLAUDE.md item
+    await tick();
+    stdin.write("\r"); // enter opens the file
+    await tick();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("File");
+    expect(frame).toContain("CLAUDE.md"); // path header
+    stdin.write("\x1b"); // esc closes
+    await tick();
+    expect(lastFrame() ?? "").toContain("1 Config");
+    unmount();
+  });
+
   it("puts the session-start headline in the title bar", () => {
     const { lastFrame, unmount } = render(<App scan={result} />);
     expect(lastFrame() ?? "").toContain("session start ≈ ~");

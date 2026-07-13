@@ -170,13 +170,18 @@ export interface MemoryEntry {
 /** Max content lines shown per memory file in --memories / the TUI overlay. */
 export const MEMORY_PREVIEW_LINES = 40;
 
-function readContentLines(file: string): { lines: string[]; truncated: number } {
+/**
+ * A file's contents for display: control-stripped, trailing blanks dropped,
+ * capped at `max` lines. Shared by --memories and the TUI file viewer.
+ */
+export function readContentLines(
+  file: string,
+  max = MEMORY_PREVIEW_LINES,
+): { lines: string[]; truncated: number } {
   try {
     const all = fsReadFile(file, "utf8").split("\n");
     while (all.length > 0 && all[all.length - 1]!.trim() === "") all.pop();
-    const lines = all
-      .slice(0, MEMORY_PREVIEW_LINES)
-      .map((l) => stripControl(l));
+    const lines = all.slice(0, max).map((l) => stripControl(l));
     return { lines, truncated: Math.max(0, all.length - lines.length) };
   } catch {
     return { lines: [], truncated: 0 };

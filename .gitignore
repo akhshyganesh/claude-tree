@@ -1,2 +1,5 @@
 node_modules
 dist
+
+# Test fixtures must be committed even where global ignores exclude .claude local files.
+!tests/fixtures/**/.claude/settings.local.json

@@ -15,9 +15,13 @@ import {
   contextCostHeadline,
   costBar,
   formatTokens,
-  ESTIMATE_CAPTION,
 } from "../context-cost.js";
-import { MODELS, DEFAULT_MODEL_ID, gaugeFor } from "../models.js";
+import {
+  MODELS,
+  DEFAULT_MODEL_ID,
+  gaugeFor,
+  formatWindow,
+} from "../models.js";
 import {
   collectMemories,
   readContentLines,
@@ -224,24 +228,28 @@ function costLines(scan: ScanResult, selectedModel: string): PanelLine[] {
     });
   }
   lines.push({
-    text: `~${formatTokens(summary.totalDeferred)} tokens deferred (deferred = loads only if something triggers it)`,
+    text: `~${formatTokens(summary.totalDeferred)} deferred (loads only when triggered)`,
     dim: true,
   });
-  lines.push({ text: ESTIMATE_CAPTION, dim: true });
+  lines.push({ text: "≈ chars ÷4.6 md · ÷3.6 code · ÷4.2 json", dim: true });
   lines.push({ text: " " });
-  lines.push({ text: "share of context window (m to switch model):", bold: true });
+  lines.push({ text: "context window share (m = model):", bold: true });
   for (const m of MODELS) {
-    const g = gaugeFor(summary, m);
+    const g = gaugeFor(summary, m, 6);
     const selected = m.id === selectedModel;
+    // Compact rows so the percentage survives an 80-column terminal.
+    const tail = selected
+      ? `${g.percentText}/${formatWindow(m.contextWindow)}`
+      : g.percentText;
     lines.push({
-      text: `${selected ? "▶ " : "  "}${g.line}`,
+      text: `${selected ? "▶ " : "  "}${m.label.padEnd(10)} ${g.bar} ${tail}`,
       color: selected ? "cyan" : undefined,
       bold: selected,
       dim: !selected,
     });
   }
   lines.push({
-    text: "  (hard window; auto-compaction triggers well before the limit)",
+    text: "  (auto-compaction kicks in before 100%)",
     dim: true,
   });
   lines.push({ text: " " });
@@ -272,13 +280,35 @@ function costLines(scan: ScanResult, selectedModel: string): PanelLine[] {
   return lines;
 }
 
+/**
+ * First-run onboarding shown in the Detail pane until an item is selected —
+ * a newcomer's "what is this and why should I care", in plain words.
+ */
+function welcomeLines(): PanelLine[] {
+  return [
+    { text: "Welcome to claude-tree", bold: true, color: "cyan" },
+    { text: " " },
+    {
+      text: "Every Claude Code session silently loads configuration from up to four places: org policy, your home ~/.claude, this project's .claude, and local overrides. This app shows exactly what would load if Claude ran here, when it enters Claude's context, and what it costs in tokens.",
+    },
+    { text: " " },
+    { text: "The four panels:", bold: true },
+    { text: "1 Config — everything that exists, level by level. Press enter on any item to read the file itself." },
+    { text: "2 Load pipeline — what happens, in order, when a session starts here." },
+    { text: "3 Context cost — how many tokens your setup eats before you type a word, and how full each Claude model's context window gets (press m to compare models)." },
+    { text: "4 Memories — what Claude has saved about this project. Press enter there for the full memory view." },
+    { text: " " },
+    { text: "Start here:", bold: true },
+    { text: "↑↓ move · → expand a level · enter read a file · ? full help · q quit", dim: true },
+    { text: " " },
+    { text: "Select any item on the left and this pane explains it: what it is, who triggers it, and when it costs context.", dim: true },
+  ];
+}
+
 /** Detail pane lines for the current tree selection. */
 function detailLines(current: Row | undefined): PanelLine[] {
   if (!current?.data) {
-    return [
-      { text: current?.label ?? "claude-tree", bold: true },
-      { text: "Select an item in Config to see how it loads.", dim: true },
-    ];
+    return welcomeLines();
   }
   return buildDetail(current.data).map((l) => ({
     text: l.text,
@@ -305,46 +335,61 @@ function fileViewLines(path: string): PanelLine[] {
     out.push({ text: "(empty file, or not readable)", dim: true });
     return out;
   }
-  for (const l of lines) out.push({ text: l });
+  // Ink swallows empty strings — keep blank lines as a single space so the
+  // file's own paragraph breaks survive.
+  for (const l of lines) out.push({ text: l === "" ? " " : l });
   if (truncated > 0)
     out.push({ text: `… ${truncated} more line(s) not shown`, dim: true });
   return out;
 }
 
+/** One selectable row in the Memories panel. */
+interface MemoryRow {
+  label: string;
+  dim?: boolean;
+  bold?: boolean;
+  /** File to open on enter (null for gloss rows). */
+  path: string | null;
+  /** True for the "full memory view" action row. */
+  fullView?: boolean;
+}
+
 /**
  * Panel 4: Claude's saved memories for this project — the auto-memory
- * MEMORY.md index + on-demand topic files. Distinct from the CLAUDE.md files
- * (those are config, listed in panel 1); this is what Claude wrote for itself.
+ * MEMORY.md index + on-demand topic files, as a navigable list (↑↓ select,
+ * enter opens the file). Distinct from the CLAUDE.md files (those are config,
+ * listed in panel 1); this is what Claude wrote for itself.
  */
-function savedMemoriesLines(scan: ScanResult): PanelLine[] {
+function buildMemoryRows(scan: ScanResult): MemoryRow[] {
   const autos = collectMemories(scan).filter((e) => e.auto);
-  const lines: PanelLine[] = [
-    { text: "what Claude remembered about this project:", dim: true },
+  const rows: MemoryRow[] = [
+    { label: "what Claude remembered about this project:", dim: true, path: null },
   ];
   if (autos.length === 0) {
-    lines.push({ text: "(no saved memories for this project yet)", dim: true });
-    lines.push({
-      text: "Claude saves them to ~/.claude/projects/<project>/memory/MEMORY.md",
+    rows.push({ label: "(no saved memories for this project yet)", dim: true, path: null });
+    rows.push({
+      label: "Claude saves them to ~/.claude/projects/<project>/memory/",
       dim: true,
+      path: null,
     });
-    return lines;
   }
   for (const e of autos) {
-    lines.push({
-      text: `MEMORY.md · ~${formatTokens(e.sessionStartTokens)} tokens at session start`,
+    rows.push({
+      label: `▸ MEMORY.md — the index · ~${formatTokens(e.sessionStartTokens)} tokens · ⏎ read`,
       bold: true,
+      path: e.path,
     });
-    lines.push({ text: e.path, dim: true });
-    for (const l of e.contentLines) lines.push({ text: l });
-    if (e.truncatedLines > 0)
-      lines.push({ text: `… ${e.truncatedLines} more line(s) — M for full view`, dim: true });
-    if (e.topics.length > 0) {
-      lines.push({ text: " " });
-      lines.push({ text: "topic files (load on demand):", bold: true });
-      for (const t of e.topics) lines.push({ text: `  · ${t}` });
+    for (const t of e.topics) {
+      const base = t.split("/").pop() ?? t;
+      rows.push({ label: `  · ${base} (topic, loads on demand) · ⏎ read`, path: t });
     }
   }
-  return lines;
+  rows.push({
+    label: "▸ full memory view — every memory file in merge order",
+    path: null,
+    fullView: true,
+  });
+  return rows;
 }
 
 /** The Memories overlay: every memory file in merge order, like --memories. */
@@ -408,8 +453,9 @@ function helpLines(): PanelLine[] {
     { text: "1-4 or tab focus panel · ↑↓ move/scroll · ←→ expand (Config)" },
     { text: "panel 4 (Memories) shows what Claude saved for this project (auto MEMORY.md)", dim: true },
     { text: "enter on any item opens the file fullscreen so you can read its contents" },
-    { text: "m switch gauge model · M memories view · q quit · ? close help" },
-    { text: "  M shows every memory file Claude loads here, in merge order (like --memories).", dim: true },
+    { text: "m switch gauge model · q quit · ? close help" },
+    { text: "  enter on panel 4 opens the full memory view: every memory file Claude", dim: true },
+    { text: "  loads here with its contents, in merge order (same as --memories).", dim: true },
     { text: " " },
     { text: "Levels (lowest → highest locality):", bold: true },
     { text: "  managed → user (~/.claude) → project (.claude) → local" },
@@ -447,9 +493,11 @@ const PANEL_TITLES: Record<PanelId, string> = {
   4: "Memories",
 };
 
+// `? help · q quit` come early so they survive truncation in narrow terminals.
 function keybar(panel: PanelId): string {
-  const common = "1-4 panels · ↑↓ · m model · M memories · ? help · q quit";
-  if (panel === 1) return `[Config] ←→ expand · ⏎ file · ${common}`;
+  const common = "? help · q quit · 1-4 panels · ↑↓ · m model";
+  if (panel === 1) return `[Config] ⏎ open · ←→ expand · ${common}`;
+  if (panel === 4) return `[Memories] ⏎ read/full view · ${common}`;
   return `[${PANEL_TITLES[panel]}] ${common}`;
 }
 
@@ -513,9 +561,11 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     () => wrapLines(detailLines(current), Math.max(10, rightW - 4)),
     [current, rightW],
   );
-  const memPanelL = useMemo(
-    () => wrapLines(savedMemoriesLines(scan), Math.max(10, rightW - 4)),
-    [scan, rightW],
+  const memRows = useMemo(() => buildMemoryRows(scan), [scan]);
+  const memPanelL = useMemo<PanelLine[]>(
+    () =>
+      memRows.map((r) => ({ text: r.label, dim: r.dim, bold: r.bold })),
+    [memRows],
   );
   const helpL = useMemo(() => helpLines(), []);
   const memL = useMemo(
@@ -537,11 +587,6 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     }
     if (input === "?") {
       setOverlay((o) => (o === "help" ? "none" : "help"));
-      setHelpOff(0);
-      return;
-    }
-    if (input === "M") {
-      setOverlay((o) => (o === "memories" ? "none" : "memories"));
       setHelpOff(0);
       return;
     }
@@ -592,6 +637,22 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
       else if (panel === 2) setSesOff((s) => Math.min(sesL.length - 1, s + 1));
       else if (panel === 3) setCostOff((s) => Math.min(costL.length - 1, s + 1));
       else setMemOff((s) => Math.min(memPanelL.length - 1, s + 1));
+      return;
+    }
+
+    // Enter on the Memories panel opens the selected memory file, or the
+    // full merge-order view from its action row.
+    if (panel === 4 && key.return) {
+      const sel = memRows[Math.min(memOff, memRows.length - 1)];
+      if (sel?.path) {
+        setFilePath(sel.path);
+        setOverlay("file");
+      } else {
+        // Gloss rows and the action row both fall back to the full view, so
+        // enter never silently does nothing here.
+        setOverlay("memories");
+      }
+      setHelpOff(0);
       return;
     }
 
@@ -684,7 +745,7 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
           overlay === "help"
             ? "↑↓ scroll · ? or esc close help · q quit"
             : overlay === "memories"
-              ? "↑↓ scroll · M or esc close memories · q quit"
+              ? "↑↓ scroll · esc close memories · q quit"
               : "↑↓ scroll · esc/enter close file · q quit",
         )}
       </Box>
@@ -735,8 +796,7 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
           <Panel
             title={`4 ${PANEL_TITLES[4]}`}
             lines={memPanelL}
-            cursor={-1}
-            scrollOffset={memOff}
+            cursor={Math.min(memOff, Math.max(0, memPanelL.length - 1))}
             focused={panel === 4}
             width={rightW}
             height={memH}

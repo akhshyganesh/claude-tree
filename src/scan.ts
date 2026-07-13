@@ -559,14 +559,20 @@ function parseHooks(
         .filter(Boolean)
         .map((c) => String(c));
       const commandSummary = commands.join("; ") || "(no command)";
-      // List rows show just the script basename; the full command lives in Detail.
-      const commandShort =
-        commands
-          .map((c) => {
-            const first = c.trim().split(/\s+/)[0] ?? c;
-            return first.includes("/") ? path.basename(first) : first;
-          })
-          .join("; ") || "(no command)";
+      // List rows show just a script basename; the full command lives in Detail.
+      // Prefer the first path-or-script-looking token — shell built-ins like
+      // `[`, `sh -c`, or `exec` make terrible labels.
+      const shortFor = (c: string): string => {
+        const tokens = c.trim().split(/\s+/);
+        const script = tokens.find(
+          (t) => /\.(sh|js|mjs|py|rb)$/.test(t) || (t.includes("/") && !t.startsWith("-")),
+        );
+        if (script) return path.basename(script.replace(/["']/g, ""));
+        const word = tokens.find((t) => /^[A-Za-z][\w.-]*$/.test(t));
+        if (word) return word;
+        return c.length > 40 ? `${c.slice(0, 37)}…` : c;
+      };
+      const commandShort = commands.map(shortFor).join("; ") || "(no command)";
       out.push({
         name: `${event}:${matcher}`,
         description: commandShort,

@@ -131,17 +131,31 @@ describe("App panel content", () => {
     unmount();
   });
 
-  it("shows the memories overlay with 'M' and closes it again", async () => {
+  it("opens the full memories view with enter on panel 4 and closes with esc", async () => {
     const { lastFrame, stdin, unmount } = render(<App scan={result} />);
     await tick();
-    stdin.write("M");
+    stdin.write("4");
+    await tick();
+    // The last row is always the "full memory view" action; ↓ clamps there.
+    for (let i = 0; i < 8; i++) {
+      stdin.write(DOWN);
+      await tick();
+    }
+    stdin.write("\r");
     await tick();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Memories Claude loads here, in merge order");
     expect(frame).toContain("CLAUDE.md");
-    stdin.write("M");
+    stdin.write("\x1b");
     await tick();
     expect(lastFrame() ?? "").toContain("1 Config");
+    unmount();
+  });
+
+  it("shows the welcome onboarding in the detail pane at startup", () => {
+    const { lastFrame, unmount } = render(<App scan={result} />);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Welcome to claude-tree");
     unmount();
   });
 

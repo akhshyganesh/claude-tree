@@ -121,6 +121,12 @@ export function renderList(scan: ScanResult): string {
   out.push("claude-tree — config visible from:");
   out.push(`  cwd:          ${scan.cwd}`);
   out.push(`  project root: ${scan.projectRoot ?? "(none found)"}`);
+  out.push(
+    "  legend: [tag] = when it enters Claude's context · ~Nt = ~N tokens",
+  );
+  out.push(
+    "          'start' = at session start · 'deferred' = only when invoked/spawned/matched",
+  );
   out.push("");
 
   for (const level of LEVEL_ORDER) {

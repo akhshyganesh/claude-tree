@@ -20,7 +20,13 @@ export {
   type CostRow,
   type LevelCost,
 } from "./context-cost.js";
-export { renderList, renderMemories } from "./render-list.js";
+export {
+  renderList,
+  renderMemories,
+  collectMemories,
+  MEMORY_MERGE_NOTE,
+  type MemoryEntry,
+} from "./render-list.js";
 export {
   MODELS,
   DEFAULT_MODEL_ID,

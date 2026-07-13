@@ -18,6 +18,10 @@ import {
   ESTIMATE_CAPTION,
 } from "../context-cost.js";
 import { MODELS, DEFAULT_MODEL_ID, gaugeFor } from "../models.js";
+import {
+  collectMemories,
+  MEMORY_MERGE_NOTE,
+} from "../render-list.js";
 import { buildRows, levelId, LEVEL_ORDER, type Row } from "./tree.js";
 import { buildDetail } from "./detail.js";
 
@@ -282,11 +286,54 @@ function detailLines(current: Row | undefined): PanelLine[] {
   }));
 }
 
+/** The Memories overlay: every memory file in merge order, like --memories. */
+function memoriesLines(scan: ScanResult): PanelLine[] {
+  const lines: PanelLine[] = [
+    { text: "Memories Claude loads here, in merge order (last read wins):", bold: true, color: "cyan" },
+    { text: " " },
+  ];
+  const entries = collectMemories(scan);
+  for (const e of entries) {
+    const cost = e.sessionStartTokens
+      ? ` · ~${formatTokens(e.sessionStartTokens)} tokens at session start`
+      : "";
+    lines.push({ text: `${e.order}. [${e.level}] ${e.kind}${cost}`, bold: true });
+    lines.push({ text: `   ${e.path}`, dim: true });
+    if (e.description) lines.push({ text: `   ${e.description}` });
+    if (e.imports.length > 0)
+      lines.push({ text: `   @imports: ${e.imports.join(", ")}` });
+    for (const topic of e.topics) {
+      lines.push({ text: `     · topic file (loads on demand): ${topic}`, dim: true });
+    }
+    lines.push({ text: " " });
+  }
+  if (entries.length === 0) {
+    lines.push({ text: "(no memory files found from this directory)", dim: true });
+    lines.push({ text: " " });
+    lines.push({
+      text: "Claude would look for: a managed CLAUDE.md, CLAUDE.md/.claude/CLAUDE.md",
+      dim: true,
+    });
+    lines.push({
+      text: "in each dir from the project root down to here, ~/.claude/CLAUDE.md,",
+      dim: true,
+    });
+    lines.push({
+      text: "and auto memory at ~/.claude/projects/<project-slug>/memory/MEMORY.md.",
+      dim: true,
+    });
+    lines.push({ text: " " });
+  }
+  lines.push({ text: MEMORY_MERGE_NOTE, dim: true });
+  return lines;
+}
+
 function helpLines(): PanelLine[] {
   return [
     { text: "claude-tree — help", bold: true, color: "cyan" },
     { text: "1/2/3 or tab focus panel · ↑↓ move/scroll · ←→/enter expand (Config)" },
-    { text: "m switch gauge model · q quit · ? close help" },
+    { text: "m switch gauge model · M memories view · q quit · ? close help" },
+    { text: "  M shows every memory file Claude loads here, in merge order (like --memories).", dim: true },
     { text: " " },
     { text: "Levels (lowest → highest locality):", bold: true },
     { text: "  managed → user (~/.claude) → project (.claude) → local" },
@@ -323,9 +370,9 @@ const PANEL_TITLES: Record<PanelId, string> = {
   3: "Context cost",
 };
 
-function keybar(panel: PanelId, help: boolean): string {
-  if (help) return "↑↓ scroll · ? close help · q quit";
-  const common = "1/2/3·tab switch · ↑↓ move · m model · q quit · ? help";
+function keybar(panel: PanelId): string {
+  const common =
+    "1/2/3·tab switch · ↑↓ move · m model · M memories · q quit · ? help";
   if (panel === 1) return `[Config] ←→/enter expand · ${common}`;
   if (panel === 2) return `[Load pipeline] scroll · ${common}`;
   return `[Context cost] scroll · ${common}`;
@@ -342,7 +389,7 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   const [sesOff, setSesOff] = useState(0);
   const [costOff, setCostOff] = useState(0);
   const [helpOff, setHelpOff] = useState(0);
-  const [help, setHelp] = useState(false);
+  const [overlay, setOverlay] = useState<"none" | "help" | "memories">("none");
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
   // Bumped on terminal resize so we re-read stdout dimensions and re-render.
   const [, setResizeTick] = useState(0);
@@ -385,6 +432,10 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     [current, rightW],
   );
   const helpL = useMemo(() => helpLines(), []);
+  const memL = useMemo(
+    () => wrapLines(memoriesLines(scan), Math.max(10, cols - 4)),
+    [scan, cols],
+  );
 
   useInput((input, key) => {
     if (input === "q" || (key.ctrl && input === "c")) {
@@ -392,7 +443,12 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
       return;
     }
     if (input === "?") {
-      setHelp((h) => !h);
+      setOverlay((o) => (o === "help" ? "none" : "help"));
+      setHelpOff(0);
+      return;
+    }
+    if (input === "M") {
+      setOverlay((o) => (o === "memories" ? "none" : "memories"));
       setHelpOff(0);
       return;
     }
@@ -409,9 +465,10 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
       });
       return;
     }
-    if (help) {
+    if (overlay !== "none") {
+      const len = overlay === "help" ? helpL.length : memL.length;
       if (key.upArrow) setHelpOff((s) => Math.max(0, s - 1));
-      if (key.downArrow) setHelpOff((s) => Math.min(helpL.length - 1, s + 1));
+      if (key.downArrow) setHelpOff((s) => Math.min(len - 1, s + 1));
       return;
     }
 
@@ -477,13 +534,13 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     </Text>
   );
 
-  if (help) {
+  if (overlay !== "none") {
     return (
       <Box flexDirection="column" width={cols} height={totalRows}>
         {title}
         <Panel
-          title="Help"
-          lines={helpL}
+          title={overlay === "help" ? "Help" : "Memories"}
+          lines={overlay === "help" ? helpL : memL}
           cursor={-1}
           scrollOffset={helpOff}
           focused
@@ -491,7 +548,9 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
           height={bodyH}
         />
         <Text dimColor wrap="truncate-end">
-          {keybar(panel, true)}
+          {overlay === "help"
+            ? "↑↓ scroll · ? close help · q quit"
+            : "↑↓ scroll · M close memories · q quit"}
         </Text>
       </Box>
     );
@@ -539,7 +598,7 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
         />
       </Box>
       <Text dimColor wrap="truncate-end">
-        {keybar(panel, false)}
+        {keybar(panel)}
       </Text>
     </Box>
   );

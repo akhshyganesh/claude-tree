@@ -145,44 +145,75 @@ export function renderList(scan: ScanResult): string {
   return out.join("\n");
 }
 
+/** One memory file Claude would load here, in merge-order position. */
+export interface MemoryEntry {
+  order: number;
+  level: Level;
+  /** "CLAUDE.md" / "CLAUDE.local.md" / "auto memory (MEMORY.md)". */
+  kind: string;
+  path: string;
+  description: string;
+  sessionStartTokens: number;
+  imports: string[];
+  /** Auto-memory topic files that load on demand (empty otherwise). */
+  topics: string[];
+  auto: boolean;
+}
+
 /**
  * All memory Claude would load here, in merge order (first-loaded → last;
  * last read = closest to the user, effectively highest priority), plus the
- * auto-memory topic files that only load on demand.
+ * auto-memory topic files that only load on demand. Shared by --memories
+ * and the TUI Memories overlay.
  */
-export function renderMemories(scan: ScanResult): string {
-  const out: string[] = [];
-  out.push("Memories Claude loads here, in merge order (last read wins):");
+export function collectMemories(scan: ScanResult): MemoryEntry[] {
   const order: Level[] = ["managed", "project", "local", "user"];
+  const out: MemoryEntry[] = [];
   let n = 0;
   for (const level of order) {
     for (const m of scan.levels[level].memory) {
       n++;
       const auto = (m as { autoMemory?: boolean }).autoMemory === true;
-      const cost = m.contextCost
-        ? ` ~${formatTokens(m.contextCost.sessionStartTokens)} tokens`
-        : "";
-      const kind = auto ? "auto memory (MEMORY.md)" : m.kind;
-      out.push(`  ${n}. [${level}] ${kind}${cost}`);
-      out.push(`     ${m.path}`);
-      if (m.description) out.push(`     ${stripControl(m.description)}`);
-      if (m.imports.length > 0)
-        out.push(`     @imports: ${m.imports.join(", ")}`);
-      if (auto) {
-        for (const topic of memoryTopicFiles(m.path)) {
-          out.push(`       · topic file (loads on demand): ${topic}`);
-        }
-      }
+      out.push({
+        order: n,
+        level,
+        kind: auto ? "auto memory (MEMORY.md)" : m.kind,
+        path: m.path,
+        description: stripControl(m.description ?? ""),
+        sessionStartTokens: m.contextCost?.sessionStartTokens ?? 0,
+        imports: m.imports,
+        topics: auto ? memoryTopicFiles(m.path) : [],
+        auto,
+      });
     }
   }
-  if (n === 0) out.push("  (no memory files found from this directory)");
+  return out;
+}
+
+export const MEMORY_MERGE_NOTE =
+  "Merge order: managed CLAUDE.md → project chain (root → cwd, each dir's " +
+  "CLAUDE.md then CLAUDE.local.md) → user ~/.claude/CLAUDE.md → auto MEMORY.md.";
+
+export function renderMemories(scan: ScanResult): string {
+  const out: string[] = [];
+  out.push("Memories Claude loads here, in merge order (last read wins):");
+  const entries = collectMemories(scan);
+  for (const e of entries) {
+    const cost = e.sessionStartTokens
+      ? ` ~${formatTokens(e.sessionStartTokens)} tokens`
+      : "";
+    out.push(`  ${e.order}. [${e.level}] ${e.kind}${cost}`);
+    out.push(`     ${e.path}`);
+    if (e.description) out.push(`     ${e.description}`);
+    if (e.imports.length > 0) out.push(`     @imports: ${e.imports.join(", ")}`);
+    for (const topic of e.topics) {
+      out.push(`       · topic file (loads on demand): ${topic}`);
+    }
+  }
+  if (entries.length === 0)
+    out.push("  (no memory files found from this directory)");
   out.push("");
-  out.push(
-    "Merge order: managed CLAUDE.md → project chain (root → cwd, each dir's",
-  );
-  out.push(
-    "CLAUDE.md then CLAUDE.local.md) → user ~/.claude/CLAUDE.md → auto MEMORY.md.",
-  );
+  out.push(MEMORY_MERGE_NOTE);
   return out.join("\n");
 }
 

@@ -131,6 +131,20 @@ describe("App panel content", () => {
     unmount();
   });
 
+  it("shows the memories overlay with 'M' and closes it again", async () => {
+    const { lastFrame, stdin, unmount } = render(<App scan={result} />);
+    await tick();
+    stdin.write("M");
+    await tick();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Memories Claude loads here, in merge order");
+    expect(frame).toContain("CLAUDE.md");
+    stdin.write("M");
+    await tick();
+    expect(lastFrame() ?? "").toContain("1 Config");
+    unmount();
+  });
+
   it("puts the session-start headline in the title bar", () => {
     const { lastFrame, unmount } = render(<App scan={result} />);
     expect(lastFrame() ?? "").toContain("session start ≈ ~");

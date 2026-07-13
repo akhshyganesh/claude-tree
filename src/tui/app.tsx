@@ -305,6 +305,19 @@ function memoriesLines(scan: ScanResult): PanelLine[] {
     for (const topic of e.topics) {
       lines.push({ text: `     · topic file (loads on demand): ${topic}`, dim: true });
     }
+    if (e.contentLines.length > 0) {
+      lines.push({ text: "   ┌─ contents:", dim: true });
+      for (const line of e.contentLines) {
+        lines.push({ text: `   │ ${line}` });
+      }
+      lines.push({
+        text:
+          e.truncatedLines > 0
+            ? `   └─ … ${e.truncatedLines} more line(s) — open the file for the rest`
+            : "   └─",
+        dim: true,
+      });
+    }
     lines.push({ text: " " });
   }
   if (entries.length === 0) {

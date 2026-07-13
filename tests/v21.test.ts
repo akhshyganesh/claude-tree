@@ -138,6 +138,21 @@ describe("--memories view", () => {
     );
   });
 
+  it("shows what is inside each memory file, capped with a truncation marker", () => {
+    const home = tmpHome();
+    const proj = path.join(home, "proj");
+    fs.mkdirSync(path.join(proj, ".git"), { recursive: true });
+    const body = ["# my rules", ...Array.from({ length: 60 }, (_, i) => `rule ${i}`)];
+    fs.writeFileSync(path.join(proj, "CLAUDE.md"), body.join("\n"));
+
+    const out = renderMemories(scan({ cwd: proj, home }));
+    expect(out).toContain("┌─ contents:");
+    expect(out).toContain("│ # my rules");
+    expect(out).toContain("│ rule 38"); // inside the 40-line cap
+    expect(out).not.toContain("rule 45"); // beyond the cap
+    expect(out).toMatch(/… \d+ more line\(s\)/);
+  });
+
   it("says so when nothing is found", () => {
     const out = renderMemories(
       scan({ cwd: "/nonexistent/xyz", home: "/nonexistent/home" }),

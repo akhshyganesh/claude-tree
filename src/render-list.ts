@@ -10,7 +10,10 @@ import {
 } from "./context-cost.js";
 import { gaugeFor, modelById, DEFAULT_MODEL_ID } from "./models.js";
 import { stripControl } from "./util.js";
-import { readdirSync as fsReadDir } from "node:fs";
+import {
+  readdirSync as fsReadDir,
+  readFileSync as fsReadFile,
+} from "node:fs";
 import { dirname as pathDirname } from "node:path";
 import type {
   BaseItem,
@@ -158,6 +161,26 @@ export interface MemoryEntry {
   /** Auto-memory topic files that load on demand (empty otherwise). */
   topics: string[];
   auto: boolean;
+  /** The file's contents (control-stripped, capped) so you can read what's saved. */
+  contentLines: string[];
+  /** Lines beyond the cap, 0 when contentLines is the whole file. */
+  truncatedLines: number;
+}
+
+/** Max content lines shown per memory file in --memories / the TUI overlay. */
+export const MEMORY_PREVIEW_LINES = 40;
+
+function readContentLines(file: string): { lines: string[]; truncated: number } {
+  try {
+    const all = fsReadFile(file, "utf8").split("\n");
+    while (all.length > 0 && all[all.length - 1]!.trim() === "") all.pop();
+    const lines = all
+      .slice(0, MEMORY_PREVIEW_LINES)
+      .map((l) => stripControl(l));
+    return { lines, truncated: Math.max(0, all.length - lines.length) };
+  } catch {
+    return { lines: [], truncated: 0 };
+  }
 }
 
 /**
@@ -174,6 +197,7 @@ export function collectMemories(scan: ScanResult): MemoryEntry[] {
     for (const m of scan.levels[level].memory) {
       n++;
       const auto = (m as { autoMemory?: boolean }).autoMemory === true;
+      const content = readContentLines(m.path);
       out.push({
         order: n,
         level,
@@ -184,6 +208,8 @@ export function collectMemories(scan: ScanResult): MemoryEntry[] {
         imports: m.imports,
         topics: auto ? memoryTopicFiles(m.path) : [],
         auto,
+        contentLines: content.lines,
+        truncatedLines: content.truncated,
       });
     }
   }
@@ -208,6 +234,13 @@ export function renderMemories(scan: ScanResult): string {
     if (e.imports.length > 0) out.push(`     @imports: ${e.imports.join(", ")}`);
     for (const topic of e.topics) {
       out.push(`       · topic file (loads on demand): ${topic}`);
+    }
+    if (e.contentLines.length > 0) {
+      out.push("     ┌─ contents:");
+      for (const line of e.contentLines) out.push(`     │ ${line}`);
+      if (e.truncatedLines > 0)
+        out.push(`     └─ … ${e.truncatedLines} more line(s)`);
+      else out.push("     └─");
     }
   }
   if (entries.length === 0)

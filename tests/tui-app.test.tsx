@@ -145,6 +145,18 @@ describe("App panel content", () => {
     unmount();
   });
 
+  it("shows the saved-memories panel 4 and focuses it with '4'", async () => {
+    const { lastFrame, stdin, unmount } = render(<App scan={result} />);
+    await tick();
+    expect(lastFrame() ?? "").toContain("4 Memories");
+    stdin.write("4");
+    await tick();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("[Memories]");
+    expect(frame).toContain("Claude remembered");
+    unmount();
+  });
+
   it("opens a fullscreen file view on enter for a leaf item", async () => {
     const { lastFrame, stdin, unmount } = render(<App scan={result} />);
     await tick();

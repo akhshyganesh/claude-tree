@@ -31,7 +31,7 @@ import { buildDetail } from "./detail.js";
 export const ALT_SCREEN_ENTER = "\x1b[?1049h";
 export const ALT_SCREEN_LEAVE = "\x1b[?1049l";
 
-type PanelId = 1 | 2 | 3;
+type PanelId = 1 | 2 | 3 | 4;
 
 interface PanelLine {
   text: string;
@@ -311,6 +311,42 @@ function fileViewLines(path: string): PanelLine[] {
   return out;
 }
 
+/**
+ * Panel 4: Claude's saved memories for this project — the auto-memory
+ * MEMORY.md index + on-demand topic files. Distinct from the CLAUDE.md files
+ * (those are config, listed in panel 1); this is what Claude wrote for itself.
+ */
+function savedMemoriesLines(scan: ScanResult): PanelLine[] {
+  const autos = collectMemories(scan).filter((e) => e.auto);
+  const lines: PanelLine[] = [
+    { text: "what Claude remembered about this project:", dim: true },
+  ];
+  if (autos.length === 0) {
+    lines.push({ text: "(no saved memories for this project yet)", dim: true });
+    lines.push({
+      text: "Claude saves them to ~/.claude/projects/<project>/memory/MEMORY.md",
+      dim: true,
+    });
+    return lines;
+  }
+  for (const e of autos) {
+    lines.push({
+      text: `MEMORY.md · ~${formatTokens(e.sessionStartTokens)} tokens at session start`,
+      bold: true,
+    });
+    lines.push({ text: e.path, dim: true });
+    for (const l of e.contentLines) lines.push({ text: l });
+    if (e.truncatedLines > 0)
+      lines.push({ text: `… ${e.truncatedLines} more line(s) — M for full view`, dim: true });
+    if (e.topics.length > 0) {
+      lines.push({ text: " " });
+      lines.push({ text: "topic files (load on demand):", bold: true });
+      for (const t of e.topics) lines.push({ text: `  · ${t}` });
+    }
+  }
+  return lines;
+}
+
 /** The Memories overlay: every memory file in merge order, like --memories. */
 function memoriesLines(scan: ScanResult): PanelLine[] {
   const lines: PanelLine[] = [
@@ -369,7 +405,8 @@ function memoriesLines(scan: ScanResult): PanelLine[] {
 function helpLines(): PanelLine[] {
   return [
     { text: "claude-tree — help", bold: true, color: "cyan" },
-    { text: "1/2/3 or tab focus panel · ↑↓ move/scroll · ←→ expand (Config)" },
+    { text: "1-4 or tab focus panel · ↑↓ move/scroll · ←→ expand (Config)" },
+    { text: "panel 4 (Memories) shows what Claude saved for this project (auto MEMORY.md)", dim: true },
     { text: "enter on any item opens the file fullscreen so you can read its contents" },
     { text: "m switch gauge model · M memories view · q quit · ? close help" },
     { text: "  M shows every memory file Claude loads here, in merge order (like --memories).", dim: true },
@@ -407,13 +444,13 @@ const PANEL_TITLES: Record<PanelId, string> = {
   1: "Config",
   2: "Load pipeline",
   3: "Context cost",
+  4: "Memories",
 };
 
 function keybar(panel: PanelId): string {
-  const common = "1/2/3 panels · ↑↓ · m model · M memories · ? help · q quit";
-  if (panel === 1) return `[Config] ←→ expand · ⏎ open file · ${common}`;
-  if (panel === 2) return `[Load pipeline] ${common}`;
-  return `[Context cost] ${common}`;
+  const common = "1-4 panels · ↑↓ · m model · M memories · ? help · q quit";
+  if (panel === 1) return `[Config] ←→ expand · ⏎ file · ${common}`;
+  return `[${PANEL_TITLES[panel]}] ${common}`;
 }
 
 export function App({ scan }: { scan: ScanResult }): React.ReactElement {
@@ -426,6 +463,7 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   const [cfgSel, setCfgSel] = useState(0);
   const [sesOff, setSesOff] = useState(0);
   const [costOff, setCostOff] = useState(0);
+  const [memOff, setMemOff] = useState(0);
   const [helpOff, setHelpOff] = useState(0);
   const [overlay, setOverlay] = useState<"none" | "help" | "memories" | "file">(
     "none",
@@ -461,9 +499,12 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   const rightW = Math.max(20, cols - leftW);
   const minor = Math.max(3, Math.floor(bodyH / 4));
   const major = bodyH - 2 * minor;
-  const p1H = panel === 1 ? major : minor;
-  const p2H = panel === 2 ? major : minor;
+  const leftFocused = panel === 1 ? 1 : panel === 2 ? 2 : 3;
+  const p1H = leftFocused === 1 ? major : minor;
+  const p2H = leftFocused === 2 ? major : minor;
   const p3H = bodyH - p1H - p2H;
+  // Right column: Detail on top, saved memories below (bigger when focused).
+  const memH = panel === 4 ? Math.floor(bodyH / 2) : Math.max(5, Math.floor(bodyH / 3));
 
   const cfgL = useMemo(() => configLines(rows), [rows]);
   const sesL = useMemo(() => sessionLines(scan), [scan]);
@@ -471,6 +512,10 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   const detL = useMemo(
     () => wrapLines(detailLines(current), Math.max(10, rightW - 4)),
     [current, rightW],
+  );
+  const memPanelL = useMemo(
+    () => wrapLines(savedMemoriesLines(scan), Math.max(10, rightW - 4)),
+    [scan, rightW],
   );
   const helpL = useMemo(() => helpLines(), []);
   const memL = useMemo(
@@ -529,21 +574,24 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     if (input === "1") return setPanel(1);
     if (input === "2") return setPanel(2);
     if (input === "3") return setPanel(3);
+    if (input === "4") return setPanel(4);
     if (key.tab) {
-      setPanel((p) => ((p % 3) + 1) as PanelId);
+      setPanel((p) => ((p % 4) + 1) as PanelId);
       return;
     }
 
     if (key.upArrow) {
       if (panel === 1) setCfgSel((s) => Math.max(0, Math.min(s, rows.length - 1) - 1));
       else if (panel === 2) setSesOff((s) => Math.max(0, s - 1));
-      else setCostOff((s) => Math.max(0, s - 1));
+      else if (panel === 3) setCostOff((s) => Math.max(0, s - 1));
+      else setMemOff((s) => Math.max(0, s - 1));
       return;
     }
     if (key.downArrow) {
       if (panel === 1) setCfgSel((s) => Math.min(rows.length - 1, s + 1));
       else if (panel === 2) setSesOff((s) => Math.min(sesL.length - 1, s + 1));
-      else setCostOff((s) => Math.min(costL.length - 1, s + 1));
+      else if (panel === 3) setCostOff((s) => Math.min(costL.length - 1, s + 1));
+      else setMemOff((s) => Math.min(memPanelL.length - 1, s + 1));
       return;
     }
 
@@ -598,6 +646,21 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     </Text>
   );
 
+  // Right-aligned attribution so shared screenshots credit the tool.
+  const footer = (text: string): React.ReactElement => {
+    const credit = "♥ npx claude-tree";
+    // Only show the credit when it fits without stealing keybar space.
+    const room = cols - text.length - credit.length - 2 > 0;
+    return (
+      <Box width={cols} justifyContent="space-between">
+        <Text dimColor wrap="truncate-end">
+          {text}
+        </Text>
+        {room ? <Text dimColor>{credit}</Text> : null}
+      </Box>
+    );
+  };
+
   if (overlay !== "none") {
     return (
       <Box flexDirection="column" width={cols} height={totalRows}>
@@ -617,13 +680,13 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
           width={cols}
           height={bodyH}
         />
-        <Text dimColor wrap="truncate-end">
-          {overlay === "help"
+        {footer(
+          overlay === "help"
             ? "↑↓ scroll · ? or esc close help · q quit"
             : overlay === "memories"
               ? "↑↓ scroll · M or esc close memories · q quit"
-              : "↑↓ scroll · esc/enter close file · q quit"}
-        </Text>
+              : "↑↓ scroll · esc/enter close file · q quit",
+        )}
       </Box>
     );
   }
@@ -660,18 +723,27 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
             height={p3H}
           />
         </Box>
-        <Panel
-          title="Detail"
-          lines={detL}
-          cursor={-1}
-          focused={false}
-          width={rightW}
-          height={bodyH}
-        />
+        <Box flexDirection="column" width={rightW} height={bodyH}>
+          <Panel
+            title="Detail"
+            lines={detL}
+            cursor={-1}
+            focused={false}
+            width={rightW}
+            height={bodyH - memH}
+          />
+          <Panel
+            title={`4 ${PANEL_TITLES[4]}`}
+            lines={memPanelL}
+            cursor={-1}
+            scrollOffset={memOff}
+            focused={panel === 4}
+            width={rightW}
+            height={memH}
+          />
+        </Box>
       </Box>
-      <Text dimColor wrap="truncate-end">
-        {keybar(panel)}
-      </Text>
+      {footer(keybar(panel))}
     </Box>
   );
 }

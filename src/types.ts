@@ -84,6 +84,8 @@ export interface HookEntry extends BaseItem {
   matcher: string;
   /** One-line summary of the command(s) wired to this hook. */
   commandSummary: string;
+  /** Script basenames only (e.g. "redact-env.sh") for list rows. */
+  commandShort: string;
 }
 
 export interface McpServerItem extends BaseItem {
@@ -119,6 +121,8 @@ export interface LevelInventory {
   settings: SettingsSummary[];
   mcpServers: McpServerItem[];
   workflows: GenericItem[];
+  /** Plugin dirs — contain loadable plugin skills/agents (not yet inspected). */
+  plugins: GenericItem[];
   /** Known Claude Code runtime data (caches, logs, history) — never loaded into context. */
   runtime: GenericItem[];
   other: GenericItem[];

@@ -131,6 +131,7 @@ function emptyInventory(level: Level): LevelInventory {
     settings: [],
     mcpServers: [],
     workflows: [],
+    plugins: [],
     runtime: [],
     other: [],
   };
@@ -153,10 +154,19 @@ const RUNTIME_DIRS = new Set([
   "ide",
   "statsig",
   "debug",
+  "sessions",
+  "telemetry",
 ]);
 
 /** Individual runtime file names. */
-const RUNTIME_FILES = new Set(["history.jsonl", ".credentials.json"]);
+const RUNTIME_FILES = new Set([
+  "history.jsonl",
+  ".credentials.json",
+  "remote-settings.json",
+  "policy-limits.json",
+  "mcp-needs-auth-cache.json",
+  "statusline-command.sh",
+]);
 
 /** True for known Claude Code runtime data (caches, logs, history, dotfiles). */
 function isRuntimeEntry(name: string): boolean {
@@ -261,6 +271,26 @@ function ancestorChain(root: string, cwd: string): string[] {
     }
   }
   return dirs;
+}
+
+/**
+ * Directories strictly between `home` and `projectRoot` (both exclusive),
+ * outermost first — the ancestor chain Claude Code's memory walk covers above
+ * the project root. Empty when the project isn't nested under home.
+ */
+export function ancestorsAboveRoot(projectRoot: string, home: string): string[] {
+  const root = path.resolve(projectRoot);
+  const h = path.resolve(home);
+  const rel = path.relative(h, root);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return [];
+  const out: string[] = [];
+  let cur = h;
+  const segs = rel.split(path.sep);
+  for (let i = 0; i < segs.length - 1; i++) {
+    cur = path.join(cur, segs[i]!);
+    out.push(cur);
+  }
+  return out;
 }
 
 /** Summed char size of one level of @imports, resolved relative to the memory dir. */
@@ -529,9 +559,17 @@ function parseHooks(
         .filter(Boolean)
         .map((c) => String(c));
       const commandSummary = commands.join("; ") || "(no command)";
+      // List rows show just the script basename; the full command lives in Detail.
+      const commandShort =
+        commands
+          .map((c) => {
+            const first = c.trim().split(/\s+/)[0] ?? c;
+            return first.includes("/") ? path.basename(first) : first;
+          })
+          .join("; ") || "(no command)";
       out.push({
         name: `${event}:${matcher}`,
-        description: commandSummary,
+        description: commandShort,
         path: file,
         level,
         loadTiming: "event-driven",
@@ -542,6 +580,7 @@ function parseHooks(
         event,
         matcher,
         commandSummary,
+        commandShort,
       });
     }
   }
@@ -632,6 +671,18 @@ function scanClaudeDir(
   for (const ent of safeReadDir(claudeDir)) {
     if (KNOWN_ENTRIES.has(ent.name)) continue;
     if (ent.name === ".mcp.json") continue;
+    if (ent.name === "plugins" && ent.isDirectory()) {
+      inv.plugins.push({
+        name: "plugins",
+        description:
+          "contains loadable plugin skills/agents — not yet inspected by claude-tree",
+        path: path.join(claudeDir, ent.name),
+        level,
+        loadTiming: "on-demand",
+        override: {},
+      });
+      continue;
+    }
     const runtime = isRuntimeEntry(ent.name);
     const item: GenericItem = {
       name: ent.name,
@@ -761,6 +812,29 @@ export function scan(opts: ScanOptions): ScanResult {
   const overlapsUser =
     projClaude !== null && path.resolve(projClaude) === path.resolve(userClaude);
   if (projectRoot && projClaude && !overlapsUser) {
+    // Ancestor config ABOVE the project root (up to $HOME, exclusive): Claude
+    // Code's memory walk goes up from cwd toward /, so a parent dir's
+    // CLAUDE.md / .claude also loads here. Outermost first — it loads first.
+    for (const dir of ancestorsAboveRoot(projectRoot, home)) {
+      const ancClaude = path.join(dir, ".claude");
+      if (path.resolve(ancClaude) !== path.resolve(userClaude)) {
+        scanClaudeDir(ancClaude, "project", levels.project, levels.local);
+      }
+      for (const memDir of [dir, ancClaude]) {
+        const ancMemory = parseMemory(
+          path.join(memDir, "CLAUDE.md"),
+          "project",
+          "CLAUDE.md",
+        );
+        if (ancMemory) {
+          ancMemory.description = `ancestor config (above project root) — ${ancMemory.description}`;
+          levels.project.present = true;
+          if (!levels.project.roots.includes(dir))
+            levels.project.roots.push(dir);
+          levels.project.memory.push(ancMemory);
+        }
+      }
+    }
     scanClaudeDir(projClaude, "project", levels.project, levels.local);
     // Walk the ancestor chain root → cwd, reading each dir's CLAUDE.md and
     // CLAUDE.local.md — deeper directories contribute memory too, not just root.

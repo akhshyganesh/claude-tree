@@ -88,7 +88,7 @@ export function memoryCost(bodyChars: number, importChars: number): ContextCost 
     deferredTokens: 0,
     note:
       importChars > 0
-        ? "full body + one level of @imports, injected at session start"
+        ? "full body at session start; @imports load recursively (≤4 hops) — this estimate covers one level"
         : "full body injected at session start",
   };
 }
@@ -276,11 +276,19 @@ export function summarizeContextCost(
   };
 }
 
-/** Compact token count: 5200 → "5.2k", 900 → "900". */
+/**
+ * Compact token count rounded to ~2 significant figures so estimates don't
+ * read as exact: 5200 → "5.2k", 1888 → "1.9k", 12345 → "12k", 900 → "900".
+ */
 export function formatTokens(n: number): string {
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
 }
+
+/** The one-line caption every renderer shows under token numbers. */
+export const ESTIMATE_CAPTION =
+  "rough estimate: chars ÷4.6 (markdown), ÷3.6 (code), ÷4.2 (json)";
 
 /** One line of the context-cost headline block, with light styling hints. */
 export interface HeadlineLine {
@@ -298,20 +306,24 @@ export function contextCostHeadline(summary: ContextCostSummary): HeadlineLine[]
   const b = summary.baseline;
   const lines: HeadlineLine[] = [
     {
-      text: `Claude Code baseline ~${formatTokens(b.minTokens)}–${formatTokens(b.maxTokens)}`,
+      text: `Claude Code baseline ~${formatTokens(b.minTokens)}–${formatTokens(b.maxTokens)} tokens`,
       dim: true,
     },
   ];
   if (summary.totalSessionStart > 0) {
-    lines.push({ text: `your config adds ~${summary.totalSessionStart}` });
+    lines.push({
+      text: `your config adds ~${formatTokens(summary.totalSessionStart)} tokens`,
+    });
   } else {
     lines.push({ text: "this directory adds no config context", dim: true });
   }
   if (summary.autoMemoryTokens > 0) {
-    lines.push({ text: `auto memory ~${summary.autoMemoryTokens}` });
+    lines.push({
+      text: `auto memory adds ~${formatTokens(summary.autoMemoryTokens)} tokens`,
+    });
   }
   lines.push({
-    text: `= session start ~${formatTokens(summary.estimatedSessionStartMin)}–${formatTokens(summary.estimatedSessionStartMax)}`,
+    text: `= session start ~${formatTokens(summary.estimatedSessionStartMin)}–${formatTokens(summary.estimatedSessionStartMax)} tokens`,
     emphasis: true,
   });
   return lines;

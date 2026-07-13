@@ -5,8 +5,13 @@ import {
   summarizeContextCost,
   contextCostHeadline,
   costBar,
+  formatTokens,
+  ESTIMATE_CAPTION,
 } from "./context-cost.js";
+import { gaugeFor, modelById, DEFAULT_MODEL_ID } from "./models.js";
 import { stripControl } from "./util.js";
+import { readdirSync as fsReadDir } from "node:fs";
+import { dirname as pathDirname } from "node:path";
 import type {
   BaseItem,
   Level,
@@ -43,10 +48,15 @@ function overrideNote(item: BaseItem): string {
   return "";
 }
 
+/** "~111t" under 1000, "~23k" above (the k already implies tokens). */
+function tokTag(n: number): string {
+  return n >= 1000 ? `~${formatTokens(n)}` : `~${n}t`;
+}
+
 function costTag(item: BaseItem): string {
   const c = item.contextCost;
   if (!c) return "";
-  return ` ~${c.sessionStartTokens}t start / ~${c.deferredTokens}t deferred`;
+  return ` ${tokTag(c.sessionStartTokens)} start / ${tokTag(c.deferredTokens)} deferred`;
 }
 
 function line(item: BaseItem): string {
@@ -64,10 +74,18 @@ function category(title: string, items: BaseItem[], out: string[]): void {
   });
 }
 
-function renderLevel(inv: LevelInventory, out: string[]): void {
+function renderLevel(
+  inv: LevelInventory,
+  out: string[],
+  projectRoot: string | null,
+): void {
   const header = `▸ ${LEVEL_LABEL[inv.level]}`;
   if (!inv.present) {
-    out.push(`${header}: absent`);
+    if (inv.level === "project" && projectRoot) {
+      out.push(`▸ Project — root found at ${projectRoot}, no .claude config`);
+    } else {
+      out.push(`${header}: absent`);
+    }
     return;
   }
   out.push(`${header}  ${inv.roots.join(", ")}`);
@@ -79,18 +97,20 @@ function renderLevel(inv: LevelInventory, out: string[]): void {
   category("hooks", inv.hooks, out);
   category("mcp servers", inv.mcpServers, out);
   category("workflows", inv.workflows, out);
-  category("other (not loaded)", inv.other, out);
+  category("plugins (contain loadable skills/agents)", inv.plugins, out);
+  category("other (not auto-loaded)", inv.other, out);
   if (inv.runtime.length > 0) {
     out.push(
       `  ├─ runtime data (${inv.runtime.length} items, not loaded into context)`,
     );
   }
-  for (const s of inv.settings) {
+  inv.settings.forEach((s, i) => {
+    const last = i === inv.settings.length - 1;
     out.push(
-      `  ├─ settings: allow ${s.allowCount} / deny ${s.denyCount} / ask ${s.askCount}` +
+      `  ${last ? "└─" : "├─"} settings: allow ${s.allowCount} / deny ${s.denyCount} / ask ${s.askCount}` +
         ` · env [${s.envKeys.join(", ")}] · ${s.hookCount} hook(s)`,
     );
-  }
+  });
 }
 
 export function renderList(scan: ScanResult): string {
@@ -101,7 +121,7 @@ export function renderList(scan: ScanResult): string {
   out.push("");
 
   for (const level of LEVEL_ORDER) {
-    renderLevel(scan.levels[level], out);
+    renderLevel(scan.levels[level], out, scan.projectRoot);
     out.push("");
   }
 
@@ -126,25 +146,78 @@ export function renderList(scan: ScanResult): string {
 }
 
 /**
- * The context-cost summary section. Estimates use Claude's tokenizer
- * (markdown ÷4.6, code ÷3.6, json ÷4.2).
+ * All memory Claude would load here, in merge order (first-loaded → last;
+ * last read = closest to the user, effectively highest priority), plus the
+ * auto-memory topic files that only load on demand.
  */
+export function renderMemories(scan: ScanResult): string {
+  const out: string[] = [];
+  out.push("Memories Claude loads here, in merge order (last read wins):");
+  const order: Level[] = ["managed", "project", "local", "user"];
+  let n = 0;
+  for (const level of order) {
+    for (const m of scan.levels[level].memory) {
+      n++;
+      const auto = (m as { autoMemory?: boolean }).autoMemory === true;
+      const cost = m.contextCost
+        ? ` ~${formatTokens(m.contextCost.sessionStartTokens)} tokens`
+        : "";
+      const kind = auto ? "auto memory (MEMORY.md)" : m.kind;
+      out.push(`  ${n}. [${level}] ${kind}${cost}`);
+      out.push(`     ${m.path}`);
+      if (m.description) out.push(`     ${stripControl(m.description)}`);
+      if (m.imports.length > 0)
+        out.push(`     @imports: ${m.imports.join(", ")}`);
+      if (auto) {
+        for (const topic of memoryTopicFiles(m.path)) {
+          out.push(`       · topic file (loads on demand): ${topic}`);
+        }
+      }
+    }
+  }
+  if (n === 0) out.push("  (no memory files found from this directory)");
+  out.push("");
+  out.push(
+    "Merge order: managed CLAUDE.md → project chain (root → cwd, each dir's",
+  );
+  out.push(
+    "CLAUDE.md then CLAUDE.local.md) → user ~/.claude/CLAUDE.md → auto MEMORY.md.",
+  );
+  return out.join("\n");
+}
+
+/** Sibling topic .md files next to an auto-memory MEMORY.md (on-demand loads). */
+function memoryTopicFiles(memoryPath: string): string[] {
+  const dir = pathDirname(memoryPath);
+  try {
+    return fsReadDir(dir)
+      .filter((f) => f.endsWith(".md") && f !== "MEMORY.md")
+      .map((f) => `${dir}/${f}`);
+  } catch {
+    return [];
+  }
+}
+
+/** The context-cost summary section (rough chars÷divisor estimates). */
 function renderContextCost(scan: ScanResult, out: string[]): void {
   const summary = summarizeContextCost(scan);
-  out.push(
-    "Context cost (~tokens, Claude tokenizer estimate (markdown ÷4.6, code ÷3.6, json ÷4.2)):",
-  );
+  out.push(`Context cost (${ESTIMATE_CAPTION}):`);
   for (const h of contextCostHeadline(summary)) {
     out.push(`  ${h.text}`);
   }
   out.push(
-    `  your config: ~${summary.totalSessionStart} tokens at session start · ~${summary.totalDeferred} tokens deferred`,
+    `  deferred pool: ~${formatTokens(summary.totalDeferred)} tokens (loads only on invocation / spawn / matching file)`,
+  );
+  const gauge = gaugeFor(summary, modelById(DEFAULT_MODEL_ID));
+  out.push(`  context window: ${gauge.line}`);
+  out.push(
+    "  (share of the hard window; auto-compaction triggers well before the limit)",
   );
   if (summary.perLevel.length > 0) {
     out.push("  per level (session start):");
     for (const lc of summary.perLevel) {
       out.push(
-        `    ${LEVEL_LABEL[lc.level]}: ~${lc.sessionStartTokens}t start / ~${lc.deferredTokens}t deferred`,
+        `    ${LEVEL_LABEL[lc.level]}: ${tokTag(lc.sessionStartTokens)} start / ${tokTag(lc.deferredTokens)} deferred`,
       );
     }
   }
@@ -154,7 +227,7 @@ function renderContextCost(scan: ScanResult, out: string[]): void {
     for (const it of summary.topItems) {
       const bar = costBar(it.sessionStartTokens, max, 20);
       out.push(
-        `    ${bar.padEnd(20)} ~${it.sessionStartTokens}t  ${stripControl(it.name)} [${it.level}/${it.type}]`,
+        `    ${bar.padEnd(20)} ${tokTag(it.sessionStartTokens)}  ${stripControl(it.name)} [${it.level}/${it.type}]`,
       );
     }
   }

@@ -5,6 +5,7 @@ import { Box, Text, render, useApp, useInput, useStdout } from "ink";
 import type { ScanResult } from "../types.js";
 import {
   buildLoadOrder,
+  MEMORY_LOAD_ORDER,
   SETTINGS_PRECEDENCE,
   SKILL_PRECEDENCE,
   AGENT_PRECEDENCE,
@@ -13,7 +14,10 @@ import {
   summarizeContextCost,
   contextCostHeadline,
   costBar,
+  formatTokens,
+  ESTIMATE_CAPTION,
 } from "../context-cost.js";
+import { MODELS, DEFAULT_MODEL_ID, gaugeFor } from "../models.js";
 import { buildRows, levelId, LEVEL_ORDER, type Row } from "./tree.js";
 import { buildDetail } from "./detail.js";
 
@@ -28,6 +32,7 @@ interface PanelLine {
   color?: string;
   dim?: boolean;
   bold?: boolean;
+  inverse?: boolean;
 }
 
 function initialExpanded(scan: ScanResult): Set<string> {
@@ -55,11 +60,45 @@ function windowSlice(
   return { start, end };
 }
 
-/** A bordered panel that windows its own lines to `innerHeight`. */
+/** Word-wrap one line to `width` columns, preserving a hanging indent. */
+export function wrapLine(text: string, width: number): string[] {
+  if (width <= 4 || text.length <= width) return [text];
+  const indentMatch = /^\s*/.exec(text);
+  const indent = (indentMatch?.[0] ?? "") + "  ";
+  const out: string[] = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (candidate.length > width && line) {
+      out.push(line);
+      line = indent + word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+/** Wrap every panel line's text to `width`, keeping styling per fragment. */
+function wrapLines(lines: PanelLine[], width: number): PanelLine[] {
+  const out: PanelLine[] = [];
+  for (const l of lines) {
+    for (const text of wrapLine(l.text, width)) out.push({ ...l, text });
+  }
+  return out;
+}
+
+/**
+ * A bordered panel that windows its own lines to `innerHeight`.
+ * `cursor` >= 0 renders an inverse selection bar (Config); `scrollOffset`
+ * mode (cursor = -1, offset given) scrolls prose without a selection bar.
+ */
 function Panel({
   title,
   lines,
   cursor,
+  scrollOffset = 0,
   focused,
   width,
   height,
@@ -67,14 +106,33 @@ function Panel({
   title: string;
   lines: PanelLine[];
   cursor: number;
+  scrollOffset?: number;
   focused: boolean;
   width: number;
   height: number;
 }): React.ReactElement {
   // height = outer box height. Inner content = height - 2 (border) - 1 (title).
   const innerHeight = Math.max(1, height - 3);
-  const { start, end } = windowSlice(lines.length, cursor, innerHeight);
-  const visible = lines.slice(start, end);
+  const { start, end } =
+    cursor >= 0
+      ? windowSlice(lines.length, cursor, innerHeight)
+      : {
+          start: Math.max(0, Math.min(scrollOffset, lines.length - innerHeight)),
+          end: Math.max(
+            0,
+            Math.min(scrollOffset, lines.length - innerHeight),
+          ) + innerHeight,
+        };
+  const visible = lines.slice(start, Math.min(end, lines.length));
+  const overflow = lines.length > innerHeight;
+  const below = lines.length - Math.min(end, lines.length);
+  const counter = overflow
+    ? cursor >= 0
+      ? ` [${cursor + 1}/${lines.length}]`
+      : below > 0
+        ? ` [↓ ${below} more]`
+        : ` [end]`
+    : "";
   return (
     <Box
       flexDirection="column"
@@ -86,6 +144,7 @@ function Panel({
     >
       <Text bold color={focused ? "cyan" : undefined} wrap="truncate-end">
         {title}
+        <Text dimColor>{counter}</Text>
       </Text>
       {lines.length === 0 ? (
         <Text dimColor wrap="truncate-end">
@@ -94,7 +153,7 @@ function Panel({
       ) : (
         visible.map((l, i) => {
           const idx = start + i;
-          const isCursor = focused && idx === cursor;
+          const isCursor = (focused && cursor >= 0 && idx === cursor) || l.inverse;
           return (
             <Text
               key={idx}
@@ -126,9 +185,11 @@ function configLines(rows: Row[]): PanelLine[] {
   });
 }
 
-/** Session-start pipeline (buildLoadOrder) → panel lines. */
+/** Load pipeline (buildLoadOrder) → panel lines. */
 function sessionLines(scan: ScanResult): PanelLine[] {
-  const lines: PanelLine[] = [];
+  const lines: PanelLine[] = [
+    { text: "what happens, in order, when a session starts here:", dim: true },
+  ];
   for (const phase of buildLoadOrder(scan)) {
     lines.push({ text: `${phase.order}. ${phase.title}`, bold: true, color: "cyan" });
     lines.push({ text: phase.explanation, dim: true });
@@ -139,12 +200,13 @@ function sessionLines(scan: ScanResult): PanelLine[] {
         lines.push({ text: `   • [${it.level}] ${it.name} — ${it.detail}` });
       }
     }
+    lines.push({ text: " " });
   }
   return lines;
 }
 
-/** Context-cost summary → panel lines with a proportional bar chart. */
-function costLines(scan: ScanResult): PanelLine[] {
+/** Context-cost summary → panel lines: headline, gauge table, breakdowns. */
+function costLines(scan: ScanResult, selectedModel: string): PanelLine[] {
   const summary = summarizeContextCost(scan);
   const lines: PanelLine[] = [];
   for (const h of contextCostHeadline(summary)) {
@@ -155,20 +217,39 @@ function costLines(scan: ScanResult): PanelLine[] {
       dim: h.dim,
     });
   }
-  lines.push({ text: `~${summary.totalDeferred} tokens deferred (dormant pool)`, dim: true });
-  lines.push({ text: "estimate: Claude tokenizer (md ÷4.6, code ÷3.6, json ÷4.2)", dim: true });
-  lines.push({ text: "" });
+  lines.push({
+    text: `~${formatTokens(summary.totalDeferred)} tokens deferred (deferred = loads only if something triggers it)`,
+    dim: true,
+  });
+  lines.push({ text: ESTIMATE_CAPTION, dim: true });
+  lines.push({ text: " " });
+  lines.push({ text: "share of context window (m to switch model):", bold: true });
+  for (const m of MODELS) {
+    const g = gaugeFor(summary, m);
+    const selected = m.id === selectedModel;
+    lines.push({
+      text: `${selected ? "▶ " : "  "}${g.line}`,
+      color: selected ? "cyan" : undefined,
+      bold: selected,
+      dim: !selected,
+    });
+  }
+  lines.push({
+    text: "  (hard window; auto-compaction triggers well before the limit)",
+    dim: true,
+  });
+  lines.push({ text: " " });
   lines.push({ text: "per level (session start):", bold: true });
   if (summary.perLevel.length === 0) {
     lines.push({ text: "   (nothing loads at session start)", dim: true });
   } else {
     for (const lc of summary.perLevel) {
       lines.push({
-        text: `   ${lc.level}: ~${lc.sessionStartTokens}t / ~${lc.deferredTokens}t deferred`,
+        text: `   ${lc.level}: ~${formatTokens(lc.sessionStartTokens)} start / ~${formatTokens(lc.deferredTokens)} deferred`,
       });
     }
   }
-  lines.push({ text: "" });
+  lines.push({ text: " " });
   lines.push({ text: "most expensive at session start:", bold: true });
   if (summary.topItems.length === 0) {
     lines.push({ text: "   (nothing)", dim: true });
@@ -177,7 +258,7 @@ function costLines(scan: ScanResult): PanelLine[] {
     for (const it of summary.topItems) {
       const bar = costBar(it.sessionStartTokens, max, 12);
       lines.push({
-        text: `   ${bar.padEnd(12)} ~${it.sessionStartTokens}t ${it.name} [${it.level}]`,
+        text: `   ${bar.padEnd(12)} ~${formatTokens(it.sessionStartTokens)} ${it.name} [${it.level}]`,
         color: "green",
       });
     }
@@ -201,51 +282,52 @@ function detailLines(current: Row | undefined): PanelLine[] {
   }));
 }
 
-function HelpView({
-  width,
-  height,
-}: {
-  width: number;
-  height: number;
-}): React.ReactElement {
-  const lines: PanelLine[] = [
+function helpLines(): PanelLine[] {
+  return [
     { text: "claude-tree — help", bold: true, color: "cyan" },
-    { text: "1/2/3 or tab focus panel · ↑↓ move · ←→/enter expand (Config)" },
-    { text: "q quit · ? close help" },
-    { text: "" },
+    { text: "1/2/3 or tab focus panel · ↑↓ move/scroll · ←→/enter expand (Config)" },
+    { text: "m switch gauge model · q quit · ? close help" },
+    { text: " " },
     { text: "Levels (lowest → highest locality):", bold: true },
     { text: "  managed → user (~/.claude) → project (.claude) → local" },
-    { text: "" },
+    { text: "  managed = org policy your admin installs machine-wide; wins over everything.", dim: true },
+    { text: " " },
     { text: "Settings precedence (highest first):", bold: true },
     ...SETTINGS_PRECEDENCE.map((p, i) => ({ text: `  ${i + 1}. ${p}`, dim: true })),
-    { text: "" },
+    { text: " " },
+    { text: "Memory (CLAUDE.md) merge order (first-loaded → last; last read wins):", bold: true },
+    ...MEMORY_LOAD_ORDER.map((p, i) => ({ text: `  ${i + 1}. ${p}`, dim: true })),
+    { text: " " },
     { text: "Name-conflict precedence (winner first):", bold: true },
     { text: `  skills:  ${SKILL_PRECEDENCE.join(" > ")}` },
     { text: `  agents:  ${AGENT_PRECEDENCE.join(" > ")} (opposite of skills)` },
+    { text: " " },
+    { text: "Context gauge (panel 3):", bold: true },
+    { text: "  Each bar shows the estimated session-start load as a share of that", dim: true },
+    { text: "  model's hard context window. Haiku's 200k window makes the same setup", dim: true },
+    { text: "  ~5x fuller than a 1M-window model. Estimates only; auto-compaction", dim: true },
+    { text: "  triggers well before the hard limit.", dim: true },
+    { text: " " },
+    { text: "Glossary:", bold: true },
+    { text: "  deferred = loads only if something triggers it (invocation/spawn/file match)", dim: true },
+    { text: "  dormant = same idea: present but not in context yet", dim: true },
+    { text: "  harness = Claude Code itself (not the model): it injects config deterministically", dim: true },
+    { text: "  frontmatter = the YAML block at the top of a skill/agent/rule .md file", dim: true },
+    { text: "  MCP = Model Context Protocol: external tool servers Claude can call", dim: true },
   ];
-  return (
-    <Panel
-      title="Help"
-      lines={lines}
-      cursor={0}
-      focused
-      width={width}
-      height={height}
-    />
-  );
 }
 
 const PANEL_TITLES: Record<PanelId, string> = {
   1: "Config",
-  2: "Session start",
+  2: "Load pipeline",
   3: "Context cost",
 };
 
 function keybar(panel: PanelId, help: boolean): string {
-  if (help) return "? close help · q quit";
-  const common = "1/2/3·tab switch · ↑↓ move · q quit · ? help";
+  if (help) return "↑↓ scroll · ? close help · q quit";
+  const common = "1/2/3·tab switch · ↑↓ move · m model · q quit · ? help";
   if (panel === 1) return `[Config] ←→/enter expand · ${common}`;
-  if (panel === 2) return `[Session start] scroll pipeline · ${common}`;
+  if (panel === 2) return `[Load pipeline] scroll · ${common}`;
   return `[Context cost] scroll · ${common}`;
 }
 
@@ -257,9 +339,11 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   );
   const [panel, setPanel] = useState<PanelId>(1);
   const [cfgSel, setCfgSel] = useState(0);
-  const [sesSel, setSesSel] = useState(0);
-  const [costSel, setCostSel] = useState(0);
+  const [sesOff, setSesOff] = useState(0);
+  const [costOff, setCostOff] = useState(0);
+  const [helpOff, setHelpOff] = useState(0);
   const [help, setHelp] = useState(false);
+  const [model, setModel] = useState(DEFAULT_MODEL_ID);
   // Bumped on terminal resize so we re-read stdout dimensions and re-render.
   const [, setResizeTick] = useState(0);
 
@@ -275,19 +359,32 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
   const rows = useMemo(() => buildRows(scan, expanded), [scan, expanded]);
   const cfgClamped = rows.length === 0 ? 0 : Math.min(cfgSel, rows.length - 1);
   const current = rows[cfgClamped];
+  const summary = useMemo(() => summarizeContextCost(scan), [scan]);
 
   // `|| ` (not `??`) so a 0-sized pty (e.g. a non-interactive capture) still
   // falls back to sane dimensions instead of collapsing the layout.
   const cols = Math.max(50, stdout?.columns || 80);
   const totalRows = Math.max(12, stdout?.rows || 24);
 
+  // Layout: title row + body + keybar fill the terminal exactly. The focused
+  // panel gets ~half the column (accordion); the others share the rest.
+  const bodyH = Math.max(6, totalRows - 2);
+  const leftW = Math.min(Math.max(28, Math.floor(cols * 0.42)), cols - 20);
+  const rightW = Math.max(20, cols - leftW);
+  const minor = Math.max(3, Math.floor(bodyH / 4));
+  const major = bodyH - 2 * minor;
+  const p1H = panel === 1 ? major : minor;
+  const p2H = panel === 2 ? major : minor;
+  const p3H = bodyH - p1H - p2H;
+
   const cfgL = useMemo(() => configLines(rows), [rows]);
   const sesL = useMemo(() => sessionLines(scan), [scan]);
-  const costL = useMemo(() => costLines(scan), [scan]);
-  const detL = detailLines(current);
-
-  const activeLen =
-    panel === 1 ? cfgL.length : panel === 2 ? sesL.length : costL.length;
+  const costL = useMemo(() => costLines(scan, model), [scan, model]);
+  const detL = useMemo(
+    () => wrapLines(detailLines(current), Math.max(10, rightW - 4)),
+    [current, rightW],
+  );
+  const helpL = useMemo(() => helpLines(), []);
 
   useInput((input, key) => {
     if (input === "q" || (key.ctrl && input === "c")) {
@@ -296,9 +393,27 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     }
     if (input === "?") {
       setHelp((h) => !h);
+      setHelpOff(0);
       return;
     }
-    if (help) return;
+    if (input === "m") {
+      setModel((cur) => {
+        const idx = MODELS.findIndex((mm) => mm.id === cur);
+        const next = MODELS[(idx + 1) % MODELS.length]!.id;
+        // Keep the newly selected gauge row visible in panel 3.
+        const rowIdx = costLines(scan, next).findIndex((l) =>
+          l.text.startsWith("▶ "),
+        );
+        if (rowIdx >= 0) setCostOff(Math.max(0, rowIdx - 4));
+        return next;
+      });
+      return;
+    }
+    if (help) {
+      if (key.upArrow) setHelpOff((s) => Math.max(0, s - 1));
+      if (key.downArrow) setHelpOff((s) => Math.min(helpL.length - 1, s + 1));
+      return;
+    }
 
     if (input === "1") return setPanel(1);
     if (input === "2") return setPanel(2);
@@ -310,14 +425,14 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
 
     if (key.upArrow) {
       if (panel === 1) setCfgSel((s) => Math.max(0, Math.min(s, rows.length - 1) - 1));
-      else if (panel === 2) setSesSel((s) => Math.max(0, s - 1));
-      else setCostSel((s) => Math.max(0, s - 1));
+      else if (panel === 2) setSesOff((s) => Math.max(0, s - 1));
+      else setCostOff((s) => Math.max(0, s - 1));
       return;
     }
     if (key.downArrow) {
       if (panel === 1) setCfgSel((s) => Math.min(rows.length - 1, s + 1));
-      else if (panel === 2) setSesSel((s) => Math.min(sesL.length - 1, s + 1));
-      else setCostSel((s) => Math.min(costL.length - 1, s + 1));
+      else if (panel === 2) setSesOff((s) => Math.min(sesL.length - 1, s + 1));
+      else setCostOff((s) => Math.min(costL.length - 1, s + 1));
       return;
     }
 
@@ -348,18 +463,17 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     }
   });
 
-  // Layout: title row + body + keybar fill the terminal exactly.
-  const bodyH = Math.max(6, totalRows - 2);
-  const leftW = Math.min(Math.max(28, Math.floor(cols * 0.42)), cols - 20);
-  const rightW = Math.max(20, cols - leftW);
-  const p1H = Math.floor(bodyH / 3);
-  const p2H = Math.floor(bodyH / 3);
-  const p3H = bodyH - p1H - p2H;
-
+  // Headline first so a long cwd can never truncate the number away.
+  const prettyCwd = scan.cwd.startsWith(scan.home)
+    ? `~${scan.cwd.slice(scan.home.length)}`
+    : scan.cwd;
   const title = (
     <Text wrap="truncate-end">
       <Text bold>{"claude-tree "}</Text>
-      <Text dimColor>{`· ${scan.cwd}`}</Text>
+      <Text bold color="cyan">
+        {`· session start ≈ ~${formatTokens(summary.estimatedSessionStartMin)}–${formatTokens(summary.estimatedSessionStartMax)} tokens `}
+      </Text>
+      <Text dimColor>{`· ${prettyCwd}`}</Text>
     </Text>
   );
 
@@ -367,7 +481,15 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
     return (
       <Box flexDirection="column" width={cols} height={totalRows}>
         {title}
-        <HelpView width={cols} height={bodyH} />
+        <Panel
+          title="Help"
+          lines={helpL}
+          cursor={-1}
+          scrollOffset={helpOff}
+          focused
+          width={cols}
+          height={bodyH}
+        />
         <Text dimColor wrap="truncate-end">
           {keybar(panel, true)}
         </Text>
@@ -391,7 +513,8 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
           <Panel
             title={`2 ${PANEL_TITLES[2]}`}
             lines={sesL}
-            cursor={sesSel}
+            cursor={-1}
+            scrollOffset={sesOff}
             focused={panel === 2}
             width={leftW}
             height={p2H}
@@ -399,7 +522,8 @@ export function App({ scan }: { scan: ScanResult }): React.ReactElement {
           <Panel
             title={`3 ${PANEL_TITLES[3]}`}
             lines={costL}
-            cursor={costSel}
+            cursor={-1}
+            scrollOffset={costOff}
             focused={panel === 3}
             width={leftW}
             height={p3H}

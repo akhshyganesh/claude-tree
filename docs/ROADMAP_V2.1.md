@@ -9,8 +9,11 @@ baseline + auto-memory + Claude-tokenizer divisors), installed globally on this 
 
 This file captures (1) a fresh-eyes audit by an independent agent (no build history,
 first-timer lens, verified against real runs at 80x24 and 120x30), (2) the new
-**context gauge** feature request, and (3) the agreed implementation plan. Nothing below
-has been implemented yet.
+**context gauge** feature request, and (3) the agreed implementation plan.
+
+**Status 2026-07-13: IMPLEMENTED.** Both passes landed (plus a `--memories` view and a
+CI matrix for Linux/macOS). Kept for history; SPEC.md and README.md are the current
+source of truth.
 
 ---
 

@@ -66,6 +66,7 @@ describe("buildDetail", () => {
       event: "Stop",
       matcher: "*",
       commandSummary: "echo \u001b[2J\u0007pwned",
+      commandShort: "echo",
     };
     const out = texts(buildDetail({ type: "hook", item: hook }));
     expect(out).not.toContain("\u001b");

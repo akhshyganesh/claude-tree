@@ -71,10 +71,12 @@ describe("renderList", () => {
   });
 
   it("renders a context-cost summary section with the baseline, range, and a bar chart", () => {
-    expect(out).toContain("Context cost (~tokens, Claude tokenizer estimate");
+    expect(out).toContain("Context cost (rough estimate: chars ÷4.6");
     expect(out).toContain("Claude Code baseline ~5.2k–5.7k");
     expect(out).toContain("= session start ~");
-    expect(out).toContain("your config: ~");
+    expect(out).toContain("your config adds ~");
+    expect(out).toContain("deferred pool: ~");
+    expect(out).toContain("context window: Opus 4.8");
     expect(out).toContain("most expensive at session start:");
     expect(out).toContain("█");
   });

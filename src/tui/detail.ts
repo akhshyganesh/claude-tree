@@ -21,7 +21,9 @@ interface Timing {
 function timingFor(data: NodeData): Timing {
   switch (data.type) {
     case "memory":
-      return LOAD_TIMINGS.memory;
+      return data.item.autoMemory
+        ? LOAD_TIMINGS.autoMemory
+        : LOAD_TIMINGS.memory;
     case "rule":
       return data.item.pathScoped
         ? LOAD_TIMINGS.rulePathScoped
@@ -46,6 +48,12 @@ function timingFor(data: NodeData): Timing {
         howItLoads:
           "Workflow file; loads/runs on demand, not auto-injected at session start.",
       };
+    case "plugin":
+      return {
+        label: "on invocation",
+        howItLoads:
+          "Plugin directory: its skills/agents load like other skills/agents (claude-tree does not inspect inside it yet).",
+      };
     case "other":
       return {
         label: "on demand",
@@ -62,13 +70,21 @@ function costFor(data: NodeData): ContextCost | undefined {
   return data.item.contextCost;
 }
 
+/** A visible blank separator line (a bare "" is swallowed by Ink). */
+const SEP: DetailLine = { text: " " };
+
 /** Build the explain-input (what/who/when) for a node. */
 function explainInputFor(data: NodeData): ExplainInput {
   const cost = costFor(data);
   const costNote = cost?.note;
   switch (data.type) {
     case "memory":
-      return { type: "memory", deprecated: data.item.deprecated, costNote };
+      return {
+        type: "memory",
+        deprecated: data.item.deprecated,
+        autoMemory: data.item.autoMemory,
+        costNote,
+      };
     case "rule":
       return { type: "rule", pathScoped: data.item.pathScoped, costNote };
     case "skill":
@@ -90,6 +106,8 @@ function explainInputFor(data: NodeData): ExplainInput {
       return { type: "settings" };
     case "workflow":
       return { type: "workflow" };
+    case "plugin":
+      return { type: "plugin" };
     case "other":
       return { type: "other" };
     case "runtime":
@@ -170,6 +188,7 @@ export function buildDetail(data: NodeData): DetailLine[] {
   if (item.description) lines.push({ text: item.description });
   lines.push({ text: `path: ${item.path}`, dim: true });
   lines.push({ text: `level: ${item.level}` });
+  lines.push(SEP);
   lines.push({ text: `load timing: ${t.label}`, bold: true });
   lines.push({ text: t.howItLoads, dim: true });
 
@@ -238,7 +257,9 @@ export function buildDetail(data: NodeData): DetailLine[] {
     default:
       break;
   }
+  lines.push(SEP);
   lines.push(...explainLines(data));
+  lines.push(SEP);
   lines.push(...costLines(data));
   return sanitize(lines);
 }

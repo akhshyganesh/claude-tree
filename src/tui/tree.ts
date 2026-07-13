@@ -34,6 +34,7 @@ export type NodeData =
   | { type: "mcp"; item: McpServerItem }
   | { type: "settings"; item: SettingsSummary }
   | { type: "workflow"; item: GenericItem }
+  | { type: "plugin"; item: GenericItem }
   | { type: "other"; item: GenericItem }
   | { type: "runtime"; count: number; level: Level };
 
@@ -68,7 +69,8 @@ function categoriesFor(inv: LevelInventory): Category[] {
     { id: "settings", label: "settings", nodes: inv.settings.map((item) => ({ type: "settings", item })) },
     { id: "mcp", label: "mcp", nodes: inv.mcpServers.map((item) => ({ type: "mcp", item })) },
     { id: "workflows", label: "workflows", nodes: inv.workflows.map((item) => ({ type: "workflow", item })) },
-    { id: "other", label: "other", nodes: inv.other.map((item) => ({ type: "other", item })) },
+    { id: "plugins", label: "plugins", nodes: inv.plugins.map((item) => ({ type: "plugin", item })) },
+    { id: "other", label: "other (not auto-loaded)", nodes: inv.other.map((item) => ({ type: "other", item })) },
   ];
   if (inv.runtime.length > 0) {
     cats.push({
@@ -107,10 +109,16 @@ export function buildRows(scan: ScanResult, expanded: ReadonlySet<string>): Row[
     const inv = scan.levels[level];
     const lid = levelId(level);
     if (!inv.present) {
+      // "absent" for a found project root reads as "you have no project";
+      // say what actually happened instead.
+      const label =
+        level === "project" && scan.projectRoot
+          ? `Project — root ${scan.projectRoot}, no .claude config`
+          : `${LEVEL_LABEL[level]} — absent`;
       rows.push({
         id: lid,
         depth: 0,
-        label: `${LEVEL_LABEL[level]} — absent`,
+        label,
         expandable: false,
         expanded: false,
         dimmed: true,

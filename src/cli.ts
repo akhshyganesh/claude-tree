@@ -1,20 +1,37 @@
 #!/usr/bin/env node
-// ABOUTME: claude-tree CLI entrypoint — routes to the TUI, --list, --json, or --help.
+// ABOUTME: claude-tree CLI entrypoint — routes to the TUI, --list, --memories, --json, --help.
 // ABOUTME: Falls back to list mode with a note when the TUI is unavailable.
+import * as fs from "node:fs";
 import * as os from "node:os";
 import { scan } from "./scan.js";
-import { renderList } from "./render-list.js";
+import { renderList, renderMemories } from "./render-list.js";
+import { summarizeContextCost } from "./context-cost.js";
+import { gaugeAllModels, DEFAULT_MODEL_ID } from "./models.js";
+import { buildLoadOrder } from "./loading-model.js";
 import type { ScanResult } from "./types.js";
 
 const HELP = `claude-tree — see every Claude Code config visible from a directory, and when it loads.
 
 Usage:
-  claude-tree            Interactive TUI (falls back to --list if unavailable)
-  claude-tree --list     Plain-text tree of levels, categories, and load order
-  claude-tree --json     Emit the raw ScanResult as JSON
-  claude-tree --help     Show this help
+  claude-tree              Interactive TUI (falls back to --list when stdout is not a TTY)
+  claude-tree --list       Plain-text tree of levels, categories, load order, and context cost
+  claude-tree --memories   Every memory file Claude loads here, in merge order
+  claude-tree --json       ScanResult as JSON, plus a summary block (cost + per-model gauges)
+  claude-tree --version    Print the version
+  claude-tree --help       Show this help
 
 Levels scanned: managed (org) → user (~/.claude) → project (.claude) → local overrides.`;
+
+function version(): string {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version?: string };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function managedRoot(): string | undefined {
   switch (process.platform) {
@@ -42,11 +59,35 @@ async function main(): Promise<void> {
     process.stdout.write(HELP + "\n");
     return;
   }
+  if (args.includes("--version") || args.includes("-v")) {
+    process.stdout.write(version() + "\n");
+    return;
+  }
 
   const result = doScan();
 
   if (args.includes("--json")) {
-    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    const summary = summarizeContextCost(result);
+    const payload = {
+      ...result,
+      summary: {
+        contextCost: summary,
+        defaultModel: DEFAULT_MODEL_ID,
+        gauges: gaugeAllModels(summary).map((g) => ({
+          model: g.model.id,
+          contextWindow: g.model.contextWindow,
+          fillFraction: g.fillFraction,
+          percentText: g.percentText,
+        })),
+        loadOrder: buildLoadOrder(result),
+      },
+    };
+    process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+    return;
+  }
+
+  if (args.includes("--memories")) {
+    process.stdout.write(renderMemories(result) + "\n");
     return;
   }
 

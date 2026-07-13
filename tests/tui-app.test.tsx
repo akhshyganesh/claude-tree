@@ -30,7 +30,7 @@ describe("App layout", () => {
     const { lastFrame, unmount } = render(<App scan={result} />);
     const frame = lastFrame() ?? "";
     expect(frame).toContain("1 Config");
-    expect(frame).toContain("2 Session start");
+    expect(frame).toContain("2 Load pipeline");
     expect(frame).toContain("3 Context cost");
     expect(frame).toContain("Detail");
     expect(frame).toContain("q quit");
@@ -67,7 +67,7 @@ describe("App panel switching", () => {
     expect(lastFrame() ?? "").toContain("[Config]");
     stdin.write("2");
     await tick();
-    expect(lastFrame() ?? "").toContain("[Session start]");
+    expect(lastFrame() ?? "").toContain("[Load pipeline]");
     stdin.write("3");
     await tick();
     expect(lastFrame() ?? "").toContain("[Context cost]");
@@ -79,7 +79,7 @@ describe("App panel switching", () => {
     await tick();
     stdin.write(TAB);
     await tick();
-    expect(lastFrame() ?? "").toContain("[Session start]");
+    expect(lastFrame() ?? "").toContain("[Load pipeline]");
     unmount();
   });
 
@@ -107,11 +107,33 @@ describe("App panel content", () => {
     unmount();
   });
 
-  it("renders the context-cost totals with an estimate label", () => {
-    const { lastFrame, unmount } = render(<App scan={result} />);
+  it("renders the context-cost totals with an estimate label", async () => {
+    const { lastFrame, stdin, unmount } = render(<App scan={result} />);
+    await tick();
+    stdin.write("3"); // focus panel 3 so the accordion gives it room
+    await tick();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("session start");
     expect(frame).toContain("deferred");
+    unmount();
+  });
+
+  it("shows the model gauge table and cycles the model with 'm'", async () => {
+    const { lastFrame, stdin, unmount } = render(<App scan={result} />);
+    await tick();
+    stdin.write("3");
+    await tick();
+    expect(lastFrame() ?? "").toContain("▶ Opus 4.8");
+    stdin.write("m");
+    await tick();
+    // Auto-scroll keeps the newly selected gauge row visible.
+    expect(lastFrame() ?? "").toContain("▶ Opus 4.7");
+    unmount();
+  });
+
+  it("puts the session-start headline in the title bar", () => {
+    const { lastFrame, unmount } = render(<App scan={result} />);
+    expect(lastFrame() ?? "").toContain("session start ≈ ~");
     unmount();
   });
 
@@ -122,7 +144,7 @@ describe("App panel content", () => {
     await tick();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Settings precedence");
-    expect(frame).toContain("opposite of skills");
+    expect(frame).toContain("merge order");
     unmount();
   });
 

@@ -48,7 +48,13 @@ export const LOAD_TIMINGS = {
     timing: "session-start",
     label: "session start",
     howItLoads:
-      "CLAUDE.md (+CLAUDE.local.md, +@imports up to 4 hops) is injected into context when the session starts.",
+      "CLAUDE.md (+CLAUDE.local.md) is injected into context when the session starts; @imports load recursively (≤4 hops — the estimate covers one level).",
+  },
+  autoMemory: {
+    timing: "session-start",
+    label: "session start",
+    howItLoads:
+      "Auto memory (MEMORY.md): the first 200 lines / 25KB are injected at session start; topic files under memory/ load on demand.",
   },
   memoryNested: {
     timing: "on-demand",
@@ -118,6 +124,7 @@ export type ItemType =
   | "mcp"
   | "settings"
   | "workflow"
+  | "plugin"
   | "other"
   | "runtime";
 
@@ -135,6 +142,8 @@ export interface ExplainInput {
   event?: string;
   /** memory: CLAUDE.local.md vs CLAUDE.md. */
   deprecated?: boolean;
+  /** memory: the auto-discovered MEMORY.md (not a CLAUDE.md file). */
+  autoMemory?: boolean;
   /** context-cost note, surfaced verbatim in "when it costs context". */
   costNote?: string;
 }
@@ -159,9 +168,16 @@ export function explainItem(input: ExplainInput): ItemExplanation {
 
   switch (input.type) {
     case "memory":
+      if (input.autoMemory) {
+        whatIsThis =
+          "Auto memory: the MEMORY.md Claude maintains for this project under ~/.claude/projects/ — not a CLAUDE.md file.";
+        whoTriggers =
+          "The harness, at session start (first 200 lines / 25KB; topic files load on demand).";
+        break;
+      }
       whatIsThis = input.deprecated
         ? "Memory: CLAUDE.local.md — deprecated, personal/gitignored memory merged into context."
-        : "Memory: a CLAUDE.md file merged into context, plus one level of @imports.";
+        : "Memory: a CLAUDE.md file merged into context; @imports load recursively (≤4 hops; the estimate covers one level).";
       whoTriggers =
         "The harness, at session start (nested/below-cwd memory loads on demand when its files are read).";
       break;
@@ -219,6 +235,12 @@ export function explainItem(input: ExplainInput): ItemExplanation {
     case "workflow":
       whatIsThis = "A workflow file; loaded/run on demand, not auto-injected.";
       whoTriggers = "You or a workflow runner, on demand.";
+      break;
+    case "plugin":
+      whatIsThis =
+        "The plugins directory: installed plugins whose skills/agents DO load like other skills/agents. claude-tree does not inspect inside it yet.";
+      whoTriggers =
+        "You (/plugin-skill) or the model, per each plugin's own skills/agents.";
       break;
     case "runtime":
       whatIsThis =

@@ -1,6 +1,6 @@
 {
   "name": "claude-tree",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Visualize every Claude Code config visible from a directory and when it loads.",
   "type": "module",
   "license": "MIT",
@@ -49,5 +49,14 @@
     "tsup": "^8.1.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.10"
+  },
+  "author": "akhshyganesh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akhshyganesh/claude-tree.git"
+  },
+  "homepage": "https://github.com/akhshyganesh/claude-tree#readme",
+  "bugs": {
+    "url": "https://github.com/akhshyganesh/claude-tree/issues"
   }
 }
